@@ -1,0 +1,47 @@
+{
+  "name": "@hedgehog2026/ciwei-ai",
+  "version": "1.0.3",
+  "description": "ciwei AI WebSocket channel for OpenClaw",
+  "keywords": [
+    "bot",
+    "channel",
+    "clawdbot",
+    "openclaw",
+    "stream",
+    "ciwei-ai"
+  ],
+  "repository": "github:hedgehog-finance/ciwei-ai",
+  "main": "index.ts",
+  "type": "module",
+  "author": "Hedgehog Finance",
+  "license": "MIT",
+  "dependencies": {
+    "ws": "^8.16.0",
+    "zod": "^3.23.0"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.2.13"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/ws": "^8.5.10",
+    "typescript": "^5.3.3"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "channels": [
+      "ciwei-ai"
+    ],
+    "installDependencies": true,
+    "channel": {
+      "id": "ciwei-ai",
+      "label": "ciwei AI",
+      "selectionLabel": "ciwei AI",
+      "docsPath": "/channels/ciwei-ai",
+      "blurb": "ciwei AI Custom Relay Channel.",
+      "order": 100
+    }
+  }
+}

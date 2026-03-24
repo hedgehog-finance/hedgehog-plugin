@@ -1,0 +1,16 @@
+{
+    "id": "ciwei-ai",
+    "name": "ciwei-ai",
+    "version": "1.0.2",
+    "description": "Custom WebSocket-based channel plugin for Ciwei AI app",
+    "entry": "./index.ts",
+    "type": "channel",
+    "channels": [
+        "ciwei-ai"
+    ],
+    "configSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+    }
+}
