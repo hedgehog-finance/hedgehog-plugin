@@ -205,14 +205,39 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 
                         if (!text) return;
 
+                        const route = rt.channel.routing.resolveAgentRoute({
+                            cfg,
+                            channel: "ciwei-ai",
+                            accountId: String(accountId),
+                            peer: { kind: "direct", id: chatId },
+                        });
                         const context = rt.channel.reply.finalizeInboundContext({
                             Body: text,
                             From: from,
                             To: chatId,
-                            SessionKey: `ws:${chatId}`,
-                            AccountId: String(accountId),
+                            SessionKey: route.sessionKey,
+                            AccountId: route.accountId,
+                            AgentId: route.agentId,
+                            AgentWorkspace: (route as any).agentWorkspace,
                             Provider: "ciwei-ai",
                             MessageSid: id,
+                        });
+
+                        await rt.channel.session.recordInboundSession({
+                            storePath: rt.channel.session.resolveStorePath(cfg.session?.store, {
+                                agentId: route.agentId,
+                            }),
+                            sessionKey: context.SessionKey || route.sessionKey,
+                            ctx: context,
+                            updateLastRoute: {
+                                sessionKey: route.mainSessionKey,
+                                channel: "ciwei-ai",
+                                to: chatId,
+                                accountId: String(accountId),
+                            },
+                            onRecordError: (err: unknown) => {
+                                log?.error?.(`[ciwei-ai][${accountId}] Failed to record inbound session: ${String(err)}`);
+                            },
                         });
 
                         // Force streaming response as per OpenClaw docs
@@ -233,7 +258,7 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 
                         await rt.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
                             ctx: context,
-                            cfg,
+                            cfg: streamingCfg,
                             dispatcherOptions: {
                                 deliver: async (payload: any) => {
                                     if (ws?.readyState === WebSocket.OPEN) {
