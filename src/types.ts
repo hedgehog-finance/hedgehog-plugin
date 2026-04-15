@@ -14,11 +14,12 @@ export interface CiweiAIResolvedAccount {
  * Inbound
  */
 export interface RelayInboundMessage {
-    type?: string;
-    from: string;
-    text: string;
-    chatId: string;
-    id: string;
+	type?: string;
+	from: string;
+	userId?: string;
+	text: string;
+	chatId: string;
+	id: string;
 }
 
 /**

@@ -1,6 +1,6 @@
 {
   "name": "@hedgehog2026/ciwei-ai",
-  "version": "1.0.4",
+  "version": "1.0.6",
   "description": "ciwei AI WebSocket channel for OpenClaw",
   "keywords": [
     "bot",
@@ -20,11 +20,10 @@
     "zod": "^3.23.0"
   },
   "peerDependencies": {
-    "openclaw": ">=2026.2.13"
+    "openclaw": ">=2026.4.9"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
-    "@types/ws": "^8.5.10",
     "typescript": "^5.3.3"
   },
   "openclaw": {

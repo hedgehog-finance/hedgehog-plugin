@@ -1,16 +1,23 @@
 {
-    "id": "ciwei-ai",
-    "name": "ciwei-ai",
-    "version": "1.0.2",
-    "description": "Custom WebSocket-based channel plugin for Ciwei AI app",
-    "entry": "./index.ts",
-    "type": "channel",
-    "channels": [
-        "ciwei-ai"
-    ],
-    "configSchema": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {}
-    }
+  "id": "ciwei-ai",
+  "name": "ciwei-ai",
+  "version": "1.0.3",
+  "description": "Comprehensive plugin for Ciwei AI: WebSocket Channel & Watchlist SQLite Tools",
+  "entry": "./index.ts",
+  "type": "channel",
+  "channels": [
+    "ciwei-ai"
+  ],
+  "tools": [
+    "add_to_watchlist",
+    "update_watchlist_item",
+    "remove_from_watchlist",
+    "get_watchlist",
+    "batch_update_sort_orders"
+  ],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
 }
