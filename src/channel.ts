@@ -1,10 +1,9 @@
 import * as os from "node:os";
 import * as fs from "node:fs";
-import * as fsAsync from "node:fs/promises"; // [新增] 引入异步 fs
+import * as fsAsync from "node:fs/promises";
 import * as path from "node:path";
 import { WebSocket, RawData } from "ws";
-import { z } from "zod";
-import { buildChannelConfigSchema } from "openclaw/plugin-sdk/core";
+import { emptyChannelConfigSchema } from "openclaw/plugin-sdk/core";
 import type { ChannelPlugin } from "openclaw/plugin-sdk/channel-plugin-common";
 import type { OpenClawConfig } from "openclaw/plugin-sdk/config-runtime";
 import type {
@@ -18,16 +17,9 @@ import type {
 	RelayInboundMessage,
 	RelayReplyMessage
 } from "./types";
-import { watchlistTools } from "./watchlist";
+import { allFeaturesTools } from "./features";
 
-/**
- * Ciwei AI Schema
- */
-const CiweiAIConfigSchema = z.object({
-	token: z.string().describe("Relay server access token").optional(),
-	accountId: z.string().describe("Relay server account ID").optional(),
-	code: z.string().describe("Unique code for this connection").optional(),
-});
+
 
 /**
  * Unix timestamp
@@ -211,7 +203,7 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 		order: 100,
 	},
 
-	configSchema: buildChannelConfigSchema(CiweiAIConfigSchema),
+	configSchema: emptyChannelConfigSchema(),
 
 	capabilities: {
 		chatTypes: ["direct"],
@@ -357,8 +349,10 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 					if (appPayload.type === "req") {
 						const { id, method, params } = appPayload;
 
-						// 检查 method 是否在我们的 watchlistTools 中
-						const tool = (watchlistTools as any)[method];
+						if (!method) return;
+
+						// 从中央工具注册表中查找方法
+						const tool = allFeaturesTools[method];
 
 						if (tool && typeof tool.execute === 'function') {
 							log?.debug?.(`[ciwei-ai][${accountId}] 拦截到 RPC 请求: ${method}`);
@@ -449,6 +443,91 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 
 					const startTime = Date.now();
 
+					// Extract replyOptions to a const so TypeScript skips excess property checking.
+					// This lets us include onToolResult which the SDK's Omit<> type strips,
+					// but the runtime still dispatches correctly.
+					const replyOpts = {
+						onPartialReply: (payload: { text?: string }) => {
+							if (payload.text && ws?.readyState === WebSocket.OPEN) {
+								const prev = sentLengthMap[chatId] || 0;
+								const delta = payload.text.slice(prev);
+								sentLengthMap[chatId] = payload.text.length;
+								if (delta) ws.send(JSON.stringify({
+									type: "reply",
+									to: from,
+									chatId: chatId,
+									text: delta,
+									replyTo: id,
+									isPartial: true,
+									fromCode: code
+								}));
+							}
+						},
+						onReasoningStream: (payload: { text?: string }) => {
+							if (payload.text && ws?.readyState === WebSocket.OPEN) {
+								const prev = reasoningLengthMap[chatId] || 0;
+								const delta = payload.text.slice(prev);
+								reasoningLengthMap[chatId] = payload.text.length;
+								if (delta) ws.send(JSON.stringify({
+									type: "reasoning",
+									to: from,
+									chatId: chatId,
+									text: delta,
+									replyTo: id,
+									fromCode: code
+								}));
+							}
+						},
+						onReasoningEnd: () => {
+							if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({
+								type: "reasoning_end",
+								to: from,
+								chatId: chatId,
+								replyTo: id,
+								fromCode: code
+							}));
+						},
+						onItemEvent: (payload: { kind?: string; title?: string; name?: string; phase?: string; status?: string; summary?: string; progressText?: string }) => {
+							if (payload.kind === 'tool') return;
+							if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({
+								type: "item_event",
+								to: from,
+								chatId: chatId,
+								replyTo: id,
+								kind: payload.kind,
+								title: payload.title,
+								name: payload.name,
+								phase: payload.phase,
+								status: payload.status,
+								summary: payload.summary,
+								progressText: payload.progressText,
+								fromCode: code
+							}));
+						},
+						onToolResult: (payload: { text?: string }) => {
+							if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({
+								type: "tool_result",
+								to: from,
+								chatId: chatId,
+								replyTo: id,
+								text: payload.text,
+								fromCode: code
+							}));
+						},
+						onModelSelected: (modelCtx: { provider: string; model: string; thinkLevel: string | undefined }) => {
+							if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({
+								type: "model",
+								to: from,
+								chatId: chatId,
+								replyTo: id,
+								provider: modelCtx.provider,
+								model: modelCtx.model,
+								thinkLevel: modelCtx.thinkLevel,
+								fromCode: code
+							}));
+						}
+					};
+
 					await rt.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
 						ctx: context,
 						cfg: streamingCfg,
@@ -495,87 +574,7 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 								delete reasoningLengthMap[chatId];
 							}
 						},
-						replyOptions: {
-							onPartialReply: (payload: any) => {
-								if (payload.text && ws?.readyState === WebSocket.OPEN) {
-									const prev = sentLengthMap[chatId] || 0;
-									const delta = payload.text.slice(prev);
-									sentLengthMap[chatId] = payload.text.length;
-									if (delta) ws.send(JSON.stringify({
-										type: "reply",
-										to: from,
-										chatId: chatId,
-										text: delta,
-										replyTo: id,
-										isPartial: true,
-										fromCode: code
-									}));
-								}
-							},
-							onReasoningStream: (payload: any) => {
-								if (payload.text && ws?.readyState === WebSocket.OPEN) {
-									const prev = reasoningLengthMap[chatId] || 0;
-									const delta = payload.text.slice(prev);
-									reasoningLengthMap[chatId] = payload.text.length;
-									if (delta) ws.send(JSON.stringify({
-										type: "reasoning",
-										to: from,
-										chatId: chatId,
-										text: delta,
-										replyTo: id,
-										fromCode: code
-									}));
-								}
-							},
-							onReasoningEnd: () => {
-								if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({
-									type: "reasoning_end",
-									to: from,
-									chatId: chatId,
-									replyTo: id,
-									fromCode: code
-								}));
-							},
-							onItemEvent: (payload: any) => {
-								if (payload.kind === 'tool') return;
-								if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({
-									type: "item_event",
-									to: from,
-									chatId: chatId,
-									replyTo: id,
-									kind: payload.kind,
-									title: payload.title,
-									name: payload.name,
-									phase: payload.phase,
-									status: payload.status,
-									summary: payload.summary,
-									progressText: payload.progressText,
-									fromCode: code
-								}));
-							},
-							onToolResult: (payload: any) => {
-								if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({
-									type: "tool_result",
-									to: from,
-									chatId: chatId,
-									replyTo: id,
-									text: payload.text,
-									fromCode: code
-								}));
-							},
-							onModelSelected: (modelCtx: any) => {
-								if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({
-									type: "model",
-									to: from,
-									chatId: chatId,
-									replyTo: id,
-									provider: modelCtx.provider,
-									model: modelCtx.model,
-									thinkLevel: modelCtx.thinkLevel,
-									fromCode: code
-								}));
-							}
-						}
+						replyOptions: replyOpts
 					});
 				} catch (err: any) {
 					log?.error?.(`[ciwei-ai][${accountId}] Dispatch error: ${err.message}`);
