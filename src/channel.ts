@@ -14,8 +14,7 @@ import type {
 import { getCiweiAIRuntime } from "./runtime";
 import type {
 	CiweiAIResolvedAccount,
-	RelayInboundMessage,
-	RelayReplyMessage
+	RelayInboundMessage
 } from "./types";
 import { allFeaturesTools } from "./features";
 
@@ -199,7 +198,7 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 		label: "Ciwei AI",
 		selectionLabel: "Ciwei AI",
 		blurb: "Custom WebSocket relay channel for Ciwei AI",
-		docsPath: "/channels/ciwei-ai",
+		docsPath: "",
 		order: 100,
 	},
 
@@ -210,7 +209,7 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 		media: false,
 		reactions: false,
 		threads: false,
-		blockStreaming: true,
+		blockStreaming: false,
 	},
 
 	config: {
@@ -323,17 +322,8 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 				resolveStop();
 			};
 
-			const streamingCfg = JSON.parse(JSON.stringify(cfg));
-			streamingCfg.channels = streamingCfg.channels || {};
-			streamingCfg.channels['ciwei-ai'] = streamingCfg.channels['ciwei-ai'] || {};
-			streamingCfg.channels['ciwei-ai'].blockStreaming = true;
-			streamingCfg.channels['ciwei-ai'].streaming = "block";
-			streamingCfg.agents = streamingCfg.agents || {};
-			streamingCfg.agents.defaults = streamingCfg.agents.defaults || {};
-			streamingCfg.agents.defaults.blockStreamingDefault = "on";
-			streamingCfg.agents.defaults.blockStreamingBreak = "text_end";
-
 			// [事件处理分离]：抽离出独立的 async 消息处理器
+
 			// channel.ts 中的 handleInboundMessage
 			const handleInboundMessage = async (data: RawData) => {
 				ctx.setStatus({
@@ -358,7 +348,7 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 							log?.debug?.(`[ciwei-ai][${accountId}] 拦截到 RPC 请求: ${method}`);
 
 							try {
-								// 直接使用外层闭包中的 accountId 作为绝对安全的 userId。
+								// 直接使用websocket中的 accountId 作为绝对安全的 userId。
 								const runContext = {
 									userId: accountId
 								};
@@ -504,16 +494,6 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 								fromCode: code
 							}));
 						},
-						onToolResult: (payload: { text?: string }) => {
-							if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({
-								type: "tool_result",
-								to: from,
-								chatId: chatId,
-								replyTo: id,
-								text: payload.text,
-								fromCode: code
-							}));
-						},
 						onModelSelected: (modelCtx: { provider: string; model: string; thinkLevel: string | undefined }) => {
 							if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({
 								type: "model",
@@ -525,56 +505,57 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 								thinkLevel: modelCtx.thinkLevel,
 								fromCode: code
 							}));
-						}
-					};
+						},
+						onEnd: async () => {
+							const durationMs = Date.now() - startTime;
 
-					await rt.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
-						ctx: context,
-						cfg: streamingCfg,
-						dispatcherOptions: {
-							deliver: async (payload: any) => {
-								const durationMs = Date.now() - startTime;
+							if (ws?.readyState === WebSocket.OPEN) {
+								ws.send(JSON.stringify({
+									type: "reply",
+									to: from,
+									chatId: chatId,
+									replyTo: id,
+									isFinal: true,
+									fromCode: code
+								}));
 
-								if (ws?.readyState === WebSocket.OPEN) {
+								const turnUsage = await getCurrentTurnUsageAsync(
+									agentId,
+									sessionKey,
+									sessionIdBefore,
+									lineCountBefore
+								);
+
+								if (turnUsage) {
 									ws.send(JSON.stringify({
-										type: "reply",
+										type: "usage",
 										to: from,
 										chatId: chatId,
 										replyTo: id,
-										isFinal: true,
+										usage: {
+											input: turnUsage.input,
+											output: turnUsage.output,
+											total: turnUsage.total,
+										},
+										durationMs: durationMs,
+										model: turnUsage.model,
+										provider: turnUsage.provider,
 										fromCode: code
 									}));
-
-									const turnUsage = await getCurrentTurnUsageAsync(
-										agentId,
-										sessionKey,
-										sessionIdBefore,
-										lineCountBefore
-									);
-
-									if (turnUsage) {
-										ws.send(JSON.stringify({
-											type: "usage",
-											to: from,
-											chatId: chatId,
-											replyTo: id,
-											usage: {
-												input: turnUsage.input,
-												output: turnUsage.output,
-												total: turnUsage.total,
-											},
-											durationMs: durationMs,
-											model: turnUsage.model,
-											provider: turnUsage.provider,
-											fromCode: code
-										}));
-									}
 								}
-								delete sentLengthMap[chatId];
-								delete reasoningLengthMap[chatId];
 							}
-						},
-						replyOptions: replyOpts
+							delete sentLengthMap[chatId];
+							delete reasoningLengthMap[chatId];
+						}
+					};
+					// 执行
+					await rt.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
+						cfg,
+						ctx: context,
+						replyOptions: replyOpts as any,
+						dispatcherOptions: {
+							deliver: async () => { }, // Use replyOpts for delivery
+						}
 					});
 				} catch (err: any) {
 					log?.error?.(`[ciwei-ai][${accountId}] Dispatch error: ${err.message}`);
