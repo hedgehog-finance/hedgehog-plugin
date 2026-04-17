@@ -5,7 +5,7 @@
   "description": "Comprehensive plugin for Ciwei AI: WebSocket Channel & Watchlist SQLite Tools",
   "entry": "./index.ts",
   "type": "channel",
-  "hooks": ["./index.ts"],
+  "hooks": ["."],
   "channels": [
     "ciwei-ai"
   ],

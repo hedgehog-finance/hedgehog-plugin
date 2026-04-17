@@ -33,7 +33,7 @@
       "./index.ts"
     ],
     "hooks": [
-      "./index.ts"
+      "."
     ],
     "channels": [
       "ciwei-ai"
