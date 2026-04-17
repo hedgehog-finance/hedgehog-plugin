@@ -1,6 +1,7 @@
 import type { PluginRuntime } from "openclaw/plugin-sdk/channel-plugin-common";
 import path from "path";
 import * as os from "node:os";
+import { logger } from "./core/logger";
 
 let runtime: PluginRuntime | null = null;
 let dbPath: string = "";
@@ -20,10 +21,9 @@ export function setCiweiAIRuntime(next: PluginRuntime): void {
 
 		dbPath = path.join(workspaceDir, "data", "business.db");
 		backupDir = path.join(workspaceDir, "backups");
-		console.log("[ciwei-ai] workspace:", workspaceDir);
-		console.log("[ciwei-ai] dbPath:", dbPath);
+		logger.info({ workspaceDir, dbPath }, "resolved workspace");
 	} catch (e) {
-		console.error("[ciwei-ai] Failed to resolve workspace:", e);
+		logger.error({ err: e }, "Failed to resolve workspace");
 	}
 }
 

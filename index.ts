@@ -4,6 +4,7 @@ import { emptyPluginConfigSchema } from "openclaw/plugin-sdk/channel-plugin-comm
 import { ciweiAIPlugin } from "./src/channel";
 import { setCiweiAIRuntime } from "./src/runtime";
 import { allFeaturesTools } from "./src/features";
+import { logger } from "./src/core/logger";
 
 let registered = false;
 
@@ -31,6 +32,6 @@ export default {
 			api.registerTool(registerable as unknown as Parameters<typeof api.registerTool>[0], { name });
 		});
 
-		console.log("[ciwei-ai] 已完成标准 Tool 与 GatewayMethod 的同步注册。");
+		logger.info("已完成标准 Tool 与 GatewayMethod 的同步注册。");
 	},
 };

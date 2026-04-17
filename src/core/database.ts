@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, existsSync, copyFileSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import { getDbPath, getBackupDir } from "../runtime";
+import { logger } from "./logger";
 
 let _db: any = null;
 let _backupJobStarted = false; // 防止多次初始化导致定时器重复创建
@@ -27,7 +28,7 @@ function performBackup(trigger: 'startup' | 'cron' = 'cron') {
 		const backupFilePath = path.join(backupDir, `business_backup_${safeTimestamp}_${trigger}.db`);
 
 		copyFileSync(dbPath, backupFilePath);
-		console.log(`[ciwei-ai] 数据库已自动备份 (${trigger}): ${backupFilePath}`);
+		logger.info({ trigger, backupFilePath }, "数据库已自动备份");
 
 		// --- B. 保留策略：清理旧备份 ---
 		const files = readdirSync(backupDir);
@@ -44,11 +45,11 @@ function performBackup(trigger: 'startup' | 'cron' = 'cron') {
 
 			for (const fileObj of filesToDelete) {
 				unlinkSync(fileObj.path);
-				console.log(`[ciwei-ai] 清理过期备份: ${path.basename(fileObj.path)}`);
+				logger.info({ fileName: path.basename(fileObj.path) }, "清理过期备份");
 			}
 		}
 	} catch (e) {
-		console.error(`[ciwei-ai] 数据库备份或清理失败 (${trigger}):`, e);
+		logger.error({ err: e, trigger }, "数据库备份或清理失败");
 	}
 }
 
@@ -72,7 +73,7 @@ function startDailyBackupJob() {
 			scheduleNextBackup(); // 执行完后再次调度
 		}, delayMs);
 
-		console.log(`[ciwei-ai] 已安排下一次定时备份在: ${nextBackupTime.toLocaleString()}`);
+		logger.info({ nextBackupTime: nextBackupTime.toLocaleString() }, "已安排下一次定时备份");
 	};
 
 	scheduleNextBackup();

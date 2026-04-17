@@ -12,6 +12,7 @@ import type {
 	ChannelStatusIssue
 } from "openclaw/plugin-sdk/channel-contract";
 import { getCiweiAIRuntime } from "./runtime";
+import { logger } from "./core/logger";
 import type {
 	CiweiAIResolvedAccount,
 	RelayInboundMessage
@@ -276,6 +277,7 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 			const { account, cfg, log, abortSignal } = ctx;
 			const rt = getCiweiAIRuntime();
 			const accountId = String(account.accountId);
+			const childLogger = logger.child({ accountId });
 			const token = account.config.token || "";
 			const code = account.config.code || `OpenClaw-${os.hostname()}`;
 			const relayUrl = `wss://relay.ciweiai.com/relay?id=${accountId}&token=${token}&role=provider&code=${code}`;
@@ -305,12 +307,12 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 				if (heartbeatInterval) clearInterval(heartbeatInterval);
 				clearStreamStates(); // [生命周期管理]：清理内存状态
 
-				log?.info?.(`[ciwei-ai][${accountId}] Stopping gateway...`);
+				childLogger.info("Stopping gateway...");
 
 				try {
 					ws?.close();
 				} catch (err: any) {
-					log?.warn?.(`[ciwei-ai][${accountId}] Error during close: ${err.message}`);
+					childLogger.warn({ err: err.message }, "Error during close");
 				}
 
 				ctx.setStatus({
@@ -345,7 +347,7 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 						const tool = allFeaturesTools[method];
 
 						if (tool && typeof tool.execute === 'function') {
-							log?.debug?.(`[ciwei-ai][${accountId}] 拦截到 RPC 请求: ${method}`);
+							childLogger.debug({ method }, "拦截到 RPC 请求");
 
 							try {
 								// 直接使用websocket中的 accountId 作为绝对安全的 userId。
@@ -367,7 +369,7 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 									}));
 								}
 							} catch (err: any) {
-								log?.error?.(`[ciwei-ai][${accountId}] RPC 执行失败: ${err.message}`);
+								childLogger.error({ err: err.message, method }, "RPC 执行失败");
 
 								// 按照 OpenClaw 官方 res 协议手动回包（失败状态）
 								if (ws?.readyState === WebSocket.OPEN) {
@@ -427,7 +429,7 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 							accountId: String(accountId),
 						},
 						onRecordError: (err: unknown) => {
-							log?.error?.(`[ciwei-ai][${accountId}] Failed to record inbound session: ${String(err)}`);
+							childLogger.error({ err: String(err) }, "Failed to record inbound session");
 						},
 					});
 
@@ -558,18 +560,18 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 						}
 					});
 				} catch (err: any) {
-					log?.error?.(`[ciwei-ai][${accountId}] Dispatch error: ${err.message}`);
+					childLogger.error({ err: err.message }, "Dispatch error");
 				}
 			};
 
 			const connect = () => {
 				if (isClosing) return;
 
-				log?.debug?.(`[ciwei-ai][${accountId}] Connecting to relay: ${relayUrl}`);
+				childLogger.debug({ relayUrl }, "Connecting to relay");
 				ws = new WebSocket(relayUrl);
 
 				ws.on("open", () => {
-					log?.info?.(`[ciwei-ai][${accountId}] Connected (Role: Provider, Code: ${code})`);
+					childLogger.info({ code }, "Connected");
 					ctx.setStatus({
 						...ctx.getStatus(),
 						running: true,
@@ -590,7 +592,7 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 				ws.on("message", handleInboundMessage);
 
 				ws.on("error", (err) => {
-					log?.error?.(`[ciwei-ai][${accountId}] WebSocket error: ${err.message}`);
+					childLogger.error({ err: err.message }, "WebSocket error");
 					ctx.setStatus({
 						...ctx.getStatus(),
 						lastError: `Connection error: ${err.message}`,
@@ -603,7 +605,7 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 
 					if (!isClosing) {
 						const retryDelay = 5000 + Math.random() * 5000;
-						log?.warn?.(`[ciwei-ai][${accountId}] Connection dropped (code=${closeCode}). Retrying in ${Math.round(retryDelay / 1000)}s...`);
+						childLogger.warn({ closeCode, retryDelay: Math.round(retryDelay / 1000) }, "Connection dropped. Retrying...");
 						ctx.setStatus({
 							...ctx.getStatus(),
 							running: false,
