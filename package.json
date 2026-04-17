@@ -1,6 +1,6 @@
 {
   "name": "@hedgehog2026/ciwei-ai",
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "ciwei AI WebSocket channel for OpenClaw",
   "keywords": [
     "bot",
@@ -30,6 +30,9 @@
   },
   "openclaw": {
     "extensions": [
+      "./index.ts"
+    ],
+    "hooks": [
       "./index.ts"
     ],
     "channels": [
