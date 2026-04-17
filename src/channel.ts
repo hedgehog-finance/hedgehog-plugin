@@ -49,7 +49,6 @@ async function getSessionEntryAsync(agentId: string, sessionKey: string) {
 			return null;
 		}
 
-		// 使用 await 异步读取，释放主线程
 		const content = await fsAsync.readFile(sessionStorePath, "utf-8");
 		const storeData = JSON.parse(content);
 		const entry = storeData[sessionKey];

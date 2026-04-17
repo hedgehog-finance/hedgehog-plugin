@@ -1,7 +1,7 @@
 {
   "id": "ciwei-ai",
   "name": "ciwei-ai",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "Comprehensive plugin for Ciwei AI: WebSocket Channel & Watchlist SQLite Tools",
   "entry": "./index.ts",
   "type": "channel",
