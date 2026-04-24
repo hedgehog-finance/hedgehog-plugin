@@ -1,6 +1,6 @@
 {
   "name": "@hedgehog2026/ciwei-ai",
-  "version": "1.0.9",
+  "version": "1.0.11",
   "description": "ciwei AI WebSocket channel for OpenClaw",
   "keywords": [
     "bot",
@@ -17,35 +17,30 @@
   "license": "MIT",
   "dependencies": {
     "pino": "^9.0.0",
-    "pino-pretty": "^11.0.0",
-    "ws": "^8.16.0",
+    "pino-pretty": "^11.1.0",
+    "ws": "^8.20.0",
     "zod": "^3.23.0"
-  },
-  "peerDependencies": {
-    "openclaw": ">=2026.4.9"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
     "typescript": "^5.3.3"
   },
   "openclaw": {
+    "kind": "channel",
     "extensions": [
       "./index.ts"
     ],
-    "hooks": [
-      "."
-    ],
-    "channels": [
-      "ciwei-ai"
-    ],
-    "installDependencies": true,
-    "channel": {
-      "id": "ciwei-ai",
-      "label": "ciwei AI",
-      "selectionLabel": "ciwei AI",
-      "docsPath": "/channels/ciwei-ai",
-      "blurb": "ciwei AI Custom Relay Channel.",
-      "order": 100
+    "install": {
+      "npmSpec": "@hedgehog2026/ciwei-ai",
+      "defaultChoice": "npm"
+    },
+    "compat": {
+      "pluginApi": ">=2026.4.15",
+      "minGatewayVersion": "2026.4.15"
+    },
+    "build": {
+      "openclawVersion": "2026.4.15",
+      "pluginSdkVersion": "2026.4.15"
     }
   }
 }

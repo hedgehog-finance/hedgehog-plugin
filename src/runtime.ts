@@ -1,4 +1,4 @@
-import type { PluginRuntime } from "openclaw/plugin-sdk/channel-plugin-common";
+import type { PluginRuntime } from "openclaw/plugin-sdk/channel-core";
 import path from "path";
 import * as os from "node:os";
 import { logger } from "./core/logger";
@@ -13,8 +13,8 @@ export function setCiweiAIRuntime(next: PluginRuntime): void {
 	try {
 		// 从配置里读取 ciwei-ai 的 workspace
 		const cfg = next.config.loadConfig();
-		const agentList = cfg.agents?.list || [];
-		const ciweiAgent = agentList.find((a: any) => a.id === "ciwei-ai");
+		const agentList = (cfg.agents?.list || []) as { id: string, workspace?: string }[];
+		const ciweiAgent = agentList.find((a) => a.id === "ciwei-ai");
 		const workspaceDir = ciweiAgent?.workspace ||
 			cfg.agents?.defaults?.workspace ||
 			path.join(os.homedir(), ".openclaw", "ciwei-ai");

@@ -15,9 +15,12 @@ import { getCiweiAIRuntime } from "./runtime";
 import { logger } from "./core/logger";
 import type {
 	CiweiAIResolvedAccount,
-	RelayInboundMessage
+	RelayInboundMessage,
+	OpenClawSessionEntry,
+	TurnUsage
 } from "./types";
 import { allFeaturesTools } from "./features";
+import { watchlistLogic } from "./features/watchlist/logic";
 
 
 
@@ -40,7 +43,7 @@ function getStateDir(): string {
 /**
  * [修改] 异步从 sessions.json 获取 session entry
  */
-async function getSessionEntryAsync(agentId: string, sessionKey: string) {
+async function getSessionEntryAsync(agentId: string, sessionKey: string): Promise<OpenClawSessionEntry | null> {
 	try {
 		const stateDir = getStateDir();
 		const sessionStorePath = path.join(stateDir, "agents", agentId, "sessions", "sessions.json");
@@ -50,7 +53,7 @@ async function getSessionEntryAsync(agentId: string, sessionKey: string) {
 		}
 
 		const content = await fsAsync.readFile(sessionStorePath, "utf-8");
-		const storeData = JSON.parse(content);
+		const storeData: Record<string, OpenClawSessionEntry> = JSON.parse(content);
 		const entry = storeData[sessionKey];
 
 		if (!entry?.sessionId) {
@@ -62,6 +65,8 @@ async function getSessionEntryAsync(agentId: string, sessionKey: string) {
 			inputTokens: entry.inputTokens || 0,
 			outputTokens: entry.outputTokens || 0,
 			totalTokens: entry.totalTokens || 0,
+			cacheRead: entry.cacheRead || 0,
+			estimatedCostUsd: entry.estimatedCostUsd || 0,
 			model: entry.model,
 			modelProvider: entry.modelProvider,
 		};
@@ -92,7 +97,7 @@ async function getJsonlLineCountAsync(agentId: string, sessionId: string): Promi
 /**
  * [修改] 异步从 .jsonl session 文件读取指定行号之后的第一条 assistant 消息的 usage
  */
-async function readUsageFromJsonlAsync(agentId: string, sessionId: string, afterLine: number) {
+async function readUsageFromJsonlAsync(agentId: string, sessionId: string, afterLine: number): Promise<TurnUsage | null> {
 	try {
 		const stateDir = getStateDir();
 		const jsonlPath = path.join(stateDir, "agents", agentId, "sessions", `${sessionId}.jsonl`);
@@ -107,15 +112,26 @@ async function readUsageFromJsonlAsync(agentId: string, sessionId: string, after
 		// 从 afterLine 开始向后找第一条 assistant 消息
 		for (let i = afterLine; i < lines.length; i++) {
 			try {
-				const entry = JSON.parse(lines[i]);
+				const entry = JSON.parse(lines[i]) as { 
+					type: string; 
+					message?: { 
+						role: string; 
+						usage?: { input_tokens?: number; output_tokens?: number; total_tokens?: number; cache_read_tokens?: number }; 
+						cost_usd?: number; 
+						model?: string; 
+						provider?: string 
+					} 
+				};
 				if (entry.type === "message" && entry.message?.role === "assistant" && entry.message?.usage) {
 					const u = entry.message.usage;
 					return {
-						input: u.input || 0,
-						output: u.output || 0,
-						total: u.totalTokens || 0,
-						model: entry.message.model,
-						provider: entry.message.provider,
+						input: u.input_tokens || 0,
+						output: u.output_tokens || 0,
+						total: u.total_tokens || 0,
+						cacheRead: u.cache_read_tokens || 0,
+						cost: entry.message.cost_usd || 0,
+						model: entry.message.model || "unknown",
+						provider: entry.message.provider || "unknown",
 					};
 				}
 			} catch {
@@ -138,7 +154,7 @@ async function getCurrentTurnUsageAsync(
 	lineCountBefore: number,
 	maxRetries: number = 60,
 	retryDelayMs: number = 100
-) {
+): Promise<TurnUsage | null> {
 	// 第一阶段：尝试从 sessions.json 读取
 	for (let attempt = 0; attempt < 40; attempt++) {
 		if (attempt > 0) {
@@ -146,13 +162,15 @@ async function getCurrentTurnUsageAsync(
 		}
 
 		const entry = await getSessionEntryAsync(agentId, sessionKey);
-		if (entry && entry.inputTokens > 0) {
+		if (entry && (entry.inputTokens || 0) > 0) {
 			return {
-				input: entry.inputTokens,
-				output: entry.outputTokens,
-				total: entry.totalTokens,
-				model: entry.model,
-				provider: entry.modelProvider,
+				input: entry.inputTokens || 0,
+				output: entry.outputTokens || 0,
+				total: entry.totalTokens || 0,
+				cacheRead: entry.cacheRead || 0,
+				cost: entry.estimatedCostUsd || 0,
+				model: entry.model || "unknown",
+				provider: entry.modelProvider || "unknown",
 			};
 		}
 	}
@@ -173,11 +191,13 @@ async function getCurrentTurnUsageAsync(
 		const startLine = (sessionIdBefore === sessionId) ? lineCountBefore : 0;
 		const usage = await readUsageFromJsonlAsync(agentId, sessionId, startLine);
 
-		if (usage && usage.input > 0) {
+		if (usage && (usage.input || 0) > 0) {
 			return {
 				input: usage.input,
 				output: usage.output,
 				total: usage.total,
+				cacheRead: usage.cacheRead || 0,
+				cost: usage.cost || 0,
 				model: usage.model,
 				provider: usage.provider,
 			};
@@ -354,6 +374,23 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 									userId: accountId
 								};
 
+								// --- [新增] 智能分类预处理 ---
+								if (method === "add_to_watchlist") {
+									const classification = await watchlistLogic.getStockClassification(rt, params.stockName, params.stockCode, params.exchange, accountId);
+									if (classification) {
+										params.industry = classification.industry;
+										params.theme = classification.theme;
+									}
+								} else if (method === "batch_add_to_watchlist" && params?.stocks) {
+									const batchResults = await watchlistLogic.getBatchStockClassification(rt, params.stocks, accountId);
+									params.stocks.forEach((s: { industry?: any; theme?: any }, i: number) => {
+										if (batchResults[i]) {
+											s.industry = batchResults[i]?.industry;
+											s.theme = batchResults[i]?.theme;
+										}
+									});
+								}
+
 								// 执行业务逻辑：传入业务参数 (params) 和安全上下文 (runContext)
 								const resultStr = await tool.execute(params, runContext);
 								const resultObj = JSON.parse(resultStr);
@@ -508,45 +545,7 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 							}));
 						},
 						onEnd: async () => {
-							const durationMs = Date.now() - startTime;
-
-							if (ws?.readyState === WebSocket.OPEN) {
-								ws.send(JSON.stringify({
-									type: "reply",
-									to: from,
-									chatId: chatId,
-									replyTo: id,
-									isFinal: true,
-									fromCode: code
-								}));
-
-								const turnUsage = await getCurrentTurnUsageAsync(
-									agentId,
-									sessionKey,
-									sessionIdBefore,
-									lineCountBefore
-								);
-
-								if (turnUsage) {
-									ws.send(JSON.stringify({
-										type: "usage",
-										to: from,
-										chatId: chatId,
-										replyTo: id,
-										usage: {
-											input: turnUsage.input,
-											output: turnUsage.output,
-											total: turnUsage.total,
-										},
-										durationMs: durationMs,
-										model: turnUsage.model,
-										provider: turnUsage.provider,
-										fromCode: code
-									}));
-								}
-							}
-							delete sentLengthMap[chatId];
-							delete reasoningLengthMap[chatId];
+							// 仅保留清理逻辑或为空
 						}
 					};
 					// 执行
@@ -558,6 +557,50 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 							deliver: async () => { }, // Use replyOpts for delivery
 						}
 					});
+
+					// --- [调整位置] 移至 Await 之后，确保流式输出彻底结束后再统计用量 ---
+					const durationMs = Date.now() - startTime;
+					if (ws?.readyState === WebSocket.OPEN) {
+						// 1. 发送 Final 确认
+						ws.send(JSON.stringify({
+							type: "reply",
+							to: from,
+							chatId: chatId,
+							replyTo: id,
+							isFinal: true,
+							fromCode: code
+						}));
+
+						// 2. 统计并发送 Usage
+						const turnUsage = await getCurrentTurnUsageAsync(
+							agentId,
+							sessionKey,
+							sessionIdBefore,
+							lineCountBefore
+						);
+
+						if (turnUsage) {
+							ws.send(JSON.stringify({
+								type: "usage",
+								to: from,
+								chatId: chatId,
+								replyTo: id,
+								usage: {
+									input: turnUsage.input,
+									output: turnUsage.output,
+									total: turnUsage.total,
+									cacheRead: turnUsage.cacheRead,
+								},
+								costUsd: turnUsage.cost || 0,
+								durationMs: durationMs,
+								model: turnUsage.model,
+								provider: turnUsage.provider,
+								fromCode: code
+							}));
+						}
+					}
+					delete sentLengthMap[chatId];
+					delete reasoningLengthMap[chatId];
 				} catch (err: any) {
 					childLogger.error({ err: err.message }, "Dispatch error");
 				}

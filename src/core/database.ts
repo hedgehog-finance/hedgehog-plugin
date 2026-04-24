@@ -79,7 +79,7 @@ function startDailyBackupJob() {
 	scheduleNextBackup();
 }
 
-export function getDB() {
+export function getDB(): DatabaseSync {
 	if (!_db) {
 		const dbPath = getDbPath();
 		const backupDir = getBackupDir();
@@ -116,55 +116,54 @@ export function getDB() {
             UNIQUE(userId, stockCode, exchange)
             );
 
+		-- 全局股票元数据缓存（一人分类，全局秒开）
+		CREATE TABLE IF NOT EXISTS global_stock_metadata (
+			stockCode     TEXT NOT NULL,
+			exchange      TEXT NOT NULL,
+			stockName     TEXT NOT NULL,
+			industryJson  TEXT, -- 结构化存储行业及其权重
+			themeJson     TEXT,    -- 结构化存储主题及其权重
+			lastUpdated   DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
+			PRIMARY KEY(stockCode, exchange)
+		);
+
         CREATE INDEX IF NOT EXISTS idx_watchlist_main
             ON watchlist(userId, isDeleted, sortOrder DESC);
 
-        CREATE TABLE IF NOT EXISTS watchlist_groups (
-            id         TEXT PRIMARY KEY,
-            userId     TEXT NOT NULL,
-            name       TEXT NOT NULL,
-            sortOrder  REAL DEFAULT 0,
-            createdAt  DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
-            updatedAt  DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW'))
-        );
-        CREATE INDEX IF NOT EXISTS idx_watchlist_groups_user ON watchlist_groups(userId);
+		CREATE TABLE IF NOT EXISTS watchlist_categories (
+			id            TEXT PRIMARY KEY,
+			remoteId      TEXT, -- 对应的ID
+			userId        TEXT NOT NULL,
+			name          TEXT NOT NULL,
+			type          TEXT NOT NULL CHECK (type IN ('industry', 'theme')),
+			weight        REAL DEFAULT 0,
+			createdAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
+			UNIQUE(userId, remoteId),
+			UNIQUE(userId, name, type)
+		);
 
-        CREATE TABLE IF NOT EXISTS watchlist_group_items (
-            id          TEXT PRIMARY KEY,
-            watchlistId TEXT NOT NULL,
-            groupId     TEXT NOT NULL,
-            userId      TEXT NOT NULL,
-            createdAt   DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
-            UNIQUE(watchlistId, groupId)
-        );
-        CREATE INDEX IF NOT EXISTS idx_watchlist_group_items_main ON watchlist_group_items(userId, groupId);
+		CREATE TABLE IF NOT EXISTS watchlist_industry_items (
+			id            TEXT PRIMARY KEY,
+			watchlistId   TEXT NOT NULL,
+			userId        TEXT NOT NULL,
+			categoryId    TEXT NOT NULL,
+			weight        REAL DEFAULT 0, -- 0-100
+			createdAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
+			UNIQUE(watchlistId, categoryId)
+		);
+		CREATE INDEX IF NOT EXISTS idx_watchlist_industry_user ON watchlist_industry_items(userId);
+
+		CREATE TABLE IF NOT EXISTS watchlist_theme_items (
+			id            TEXT PRIMARY KEY,
+			watchlistId   TEXT NOT NULL,
+			userId        TEXT NOT NULL,
+			categoryId    TEXT NOT NULL,
+			weight        REAL DEFAULT 0, -- 0-100
+			createdAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
+			UNIQUE(watchlistId, categoryId)
+		);
+		CREATE INDEX IF NOT EXISTS idx_watchlist_theme_user ON watchlist_theme_items(userId);
 		`);
-
-		// Migration 逻辑保持不变...
-		const tableInfo = _db.prepare("PRAGMA table_info(watchlist)").all();
-		const hasGroupId = tableInfo.some((col: any) => col.name === 'groupId');
-		if (hasGroupId) {
-			const users = _db.prepare("SELECT DISTINCT userId FROM watchlist").all();
-			const { randomUUID } = require("node:crypto");
-
-			for (const user of users) {
-				const uId = user.userId;
-				let allGroup = _db.prepare("SELECT id FROM watchlist_groups WHERE userId = ? AND name = '全部'").get(uId);
-				if (!allGroup) {
-					const gid = randomUUID();
-					_db.prepare("INSERT INTO watchlist_groups (id, userId, name, sortOrder) VALUES (?, ?, '全部', 0)").run(gid, uId);
-					allGroup = { id: gid };
-				}
-
-				const items = _db.prepare("SELECT id, groupId FROM watchlist WHERE userId = ? AND isDeleted = 0").all(uId);
-				for (const item of items) {
-					_db.prepare("INSERT OR IGNORE INTO watchlist_group_items (id, watchlistId, groupId, userId) VALUES (?, ?, ?, ?)").run(randomUUID(), item.id, allGroup.id, uId);
-					if (item.groupId && item.groupId !== allGroup.id) {
-						_db.prepare("INSERT OR IGNORE INTO watchlist_group_items (id, watchlistId, groupId, userId) VALUES (?, ?, ?, ?)").run(randomUUID(), item.id, item.groupId, uId);
-					}
-				}
-			}
-		}
 	}
 	return _db;
 }
