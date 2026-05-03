@@ -67,7 +67,6 @@ export const StockClassificationSchema = z.object({
         name: z.string(),
         weight: z.number().min(0).max(100).default(50)
     })).describe("Thematic categories with weights"),
-    summary: z.string().describe("Brief analysis rationale"),
     weight: z.number().min(0).max(100).default(50).describe("Overall priority weight")
 });
 

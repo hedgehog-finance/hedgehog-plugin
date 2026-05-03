@@ -2,46 +2,35 @@ import { randomUUID } from "node:crypto";
 // @ts-ignore
 import { DatabaseSync } from "node:sqlite";
 import { z } from "openclaw/plugin-sdk/zod";
+import { PluginRuntime } from "openclaw/plugin-sdk";
 import { getDB } from "../../core/database";
+import { watchlistLogic } from "./logic";
 import {
 	AddToWatchlistParams,
 	AddToWatchlistParamsSchema,
 	UpdateWatchlistItemParams,
-	UpdateWatchlistItemSchema
+	UpdateWatchlistItemSchema,
+	WatchlistRow,
+	CategoryRow,
+	TagInput,
+	GetWatchlistParams,
+	GetWatchlistParamsSchema,
+	SyncCategoriesParams,
+	SyncCategoriesParamsSchema,
+	BatchUpdateSortOrdersParams,
+	BatchUpdateSortOrdersParamsSchema
 } from "./schema";
 
-interface CategoryRow {
-	id: string;
-	name: string;
-	type?: string;
-	weight?: number;
-}
-
-interface WatchlistRow {
-	id: string;
-	isDeleted: number;
-	sortOrder: number;
-	stockName: string;
-}
-
 /**
- * 辅助函数：通过名字获取分类 ID
+ * 辅助函数：统一处理归一化分类项
  */
-function getCategoryIdByName(db: DatabaseSync, userId: string, name: string, type: 'industry' | 'theme'): string | undefined {
-	const row = db.prepare("SELECT id FROM watchlist_categories WHERE userId = ? AND name = ? AND type = ?").get(userId, name, type) as CategoryRow | undefined;
-	return row?.id;
-}
-
-/**
- * 辅助函数：统一处理归一化分类项 (支持 string | object)
- */
-function normalizeTags(input: any): { name: string, weight: number }[] {
+function normalizeTags(input: TagInput | undefined): { name: string, weight: number }[] {
 	if (!input) return [];
 	const items = Array.isArray(input) ? input : [input];
 	return items.map(item => {
 		if (typeof item === 'string') return { name: item, weight: 0 };
 		if (typeof item === 'object' && item !== null && 'name' in item) {
-			return { name: item.name as string, weight: (item as any).weight ?? 0 };
+			return { name: item.name, weight: item.weight ?? 0 };
 		}
 		return null;
 	}).filter((i): i is { name: string, weight: number } => i !== null);
@@ -50,10 +39,10 @@ function normalizeTags(input: any): { name: string, weight: number }[] {
 /**
  * 辅助函数：更新股票的分类标签
  */
-function updateWatchlistTags(db: DatabaseSync, watchlistId: string, userId: string, industry: any, theme: any) {
+function updateWatchlistTags(db: DatabaseSync, watchlistId: string, userId: string, industry: TagInput | undefined, theme: TagInput | undefined) {
 	const normIndustries = normalizeTags(industry);
 	for (const item of normIndustries) {
-		const categoryId = getCategoryIdByName(db, userId, item.name, 'industry');
+		const categoryId = watchlistLogic._ensureCategory(db, item.name, 'industry', userId);
 		if (categoryId) {
 			db.prepare(`
 				INSERT OR IGNORE INTO watchlist_industry_items (id, watchlistId, userId, categoryId, weight)
@@ -64,7 +53,7 @@ function updateWatchlistTags(db: DatabaseSync, watchlistId: string, userId: stri
 
 	const normThemes = normalizeTags(theme);
 	for (const item of normThemes) {
-		const categoryId = getCategoryIdByName(db, userId, item.name, 'theme');
+		const categoryId = watchlistLogic._ensureCategory(db, item.name, 'theme', userId);
 		if (categoryId) {
 			db.prepare(`
 				INSERT OR IGNORE INTO watchlist_theme_items (id, watchlistId, userId, categoryId, weight)
@@ -79,7 +68,7 @@ export const watchlistTools = {
 		name: "add_to_watchlist",
 		description: "添加股票到自选列表",
 		parameters: AddToWatchlistParamsSchema,
-		execute: async (args: AddToWatchlistParams, ctx: { userId: string }) => {
+		execute: async (args: AddToWatchlistParams, ctx: { userId: string, runtime?: PluginRuntime }) => {
 			const db = getDB();
 			const uId = String(ctx.userId);
 			db.exec("BEGIN TRANSACTION");
@@ -109,7 +98,17 @@ export const watchlistTools = {
 					`).run(watchlistId, uId, args.stockCode, args.stockName, args.exchange, args.market, nextOrder);
 				}
 
-				updateWatchlistTags(db, watchlistId, uId, args.industry, args.theme);
+				if (!args.industry && !args.theme && ctx.runtime) {
+					watchlistLogic.getStockClassification(ctx.runtime, args.stockName, args.stockCode, args.exchange, uId)
+						.then(classification => {
+							if (classification) {
+								const db2 = getDB();
+								updateWatchlistTags(db2, watchlistId, uId, classification.industry, classification.theme);
+							}
+						}).catch(err => console.error("[Watchlist] 自动分类失败:", err));
+				} else {
+					updateWatchlistTags(db, watchlistId, uId, args.industry, args.theme);
+				}
 				db.exec("COMMIT");
 				return JSON.stringify({ success: true, id: watchlistId });
 			} catch (e: any) {
@@ -123,7 +122,7 @@ export const watchlistTools = {
 		name: "batch_add_to_watchlist",
 		description: "批量添加股票到自选列表",
 		parameters: z.object({ stocks: z.array(AddToWatchlistParamsSchema) }),
-		execute: async (args: { stocks: AddToWatchlistParams[] }, ctx: { userId: string }) => {
+		execute: async (args: { stocks: AddToWatchlistParams[] }, ctx: { userId: string, runtime?: PluginRuntime }) => {
 			const db = getDB();
 			const uId = String(ctx.userId);
 			db.exec("BEGIN TRANSACTION");
@@ -137,29 +136,46 @@ export const watchlistTools = {
 					currentMaxOrder = nextOrder;
 
 					let watchlistId: string;
-					const existingItem = db.prepare("SELECT id, isDeleted FROM watchlist WHERE userId = ? AND stockCode = ? AND exchange = ?").get([uId, stock.stockCode, stock.exchange]) as WatchlistRow | undefined;
+					const existingItem = db.prepare("SELECT id, isDeleted FROM watchlist WHERE userId = ? AND stockCode = ? AND exchange = ?").get(uId, stock.stockCode, stock.exchange) as WatchlistRow | undefined;
 
 					if (existingItem) {
 						watchlistId = existingItem.id;
 						if (existingItem.isDeleted === 1) {
 							db.prepare(`
 								UPDATE watchlist SET isDeleted = 0, stockName = ?, sortOrder = ?, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW') WHERE id = ?
-							`).run([stock.stockName, nextOrder, watchlistId]);
+							`).run(stock.stockName, nextOrder, watchlistId);
 						} else {
 							db.prepare(`
 								UPDATE watchlist SET stockName = ?, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW') WHERE id = ?
-							`).run([stock.stockName, watchlistId]);
+							`).run(stock.stockName, watchlistId);
 						}
 					} else {
 						watchlistId = randomUUID();
 						db.prepare(`
 							INSERT INTO watchlist (id, userId, stockCode, stockName, exchange, market, sortOrder)
 							VALUES (?, ?, ?, ?, ?, ?, ?)
-						`).run([watchlistId, uId, stock.stockCode, stock.stockName, stock.exchange, stock.market, nextOrder]);
+						`).run(watchlistId, uId, stock.stockCode, stock.stockName, stock.exchange, stock.market, nextOrder);
 					}
-
-					updateWatchlistTags(db, watchlistId, uId, stock.industry, stock.theme);
 					results.push(watchlistId);
+				}
+
+				if (ctx.runtime && args.stocks.length > 0) {
+					if (!args.stocks[0].industry && !args.stocks[0].theme) {
+						watchlistLogic.getBatchStockClassification(ctx.runtime, args.stocks, uId)
+							.then(batchResults => {
+								const db2 = getDB();
+								batchResults.forEach((res, i) => {
+									if (res) {
+										updateWatchlistTags(db2, results[i], uId, res.industry, res.theme);
+									}
+								});
+							}).catch(err => console.error("[Watchlist] 批量自动分类失败:", err));
+					} else {
+						const db2 = getDB();
+						args.stocks.forEach((s, i) => {
+							updateWatchlistTags(db2, results[i], uId, s.industry, s.theme);
+						});
+					}
 				}
 
 				db.exec("COMMIT");
@@ -173,33 +189,26 @@ export const watchlistTools = {
 
 	get_watchlist: {
 		name: "get_watchlist",
-		description: "获取自选股列表（支持按维度过滤）",
-		parameters: z.object({
-			categoryId: z.string().optional().describe("分类 ID，不传返回所有"),
-			categoryType: z.enum(["industry", "theme"]).optional().describe("分类类型")
-		}),
-		execute: async (args: { categoryId?: string, categoryType?: "industry" | "theme" }, ctx: { userId: string }) => {
+		description: "获取自选股列表",
+		parameters: GetWatchlistParamsSchema,
+		execute: async (args: GetWatchlistParams, ctx: { userId: string }) => {
 			try {
 				const db = getDB();
 				const uId = String(ctx.userId);
-
 				let query: string;
 				let params: any[] = [uId];
 
 				if (args.categoryId && args.categoryType) {
-					// 过滤查询
 					const table = args.categoryType === "industry" ? "watchlist_industry_items" : "watchlist_theme_items";
 					query = `
 						SELECT w.*, ci.weight as relWeight
 						FROM watchlist w
 						JOIN ${table} ci ON w.id = ci.watchlistId
 						WHERE w.userId = ? AND w.isDeleted = 0 AND ci.categoryId = ?
-						ORDER BY ci.weight DESC, w.sortOrder DESC
+						ORDER BY ci.weight DESC, w.sortOrder ASC
 					`;
 					params.push(args.categoryId);
 				} else {
-					// 【方案 B】全量查询：按全局最高权重分排序
-					// 计算每只股票在所有行业和主题中获得的最大权重
 					query = `
 						SELECT w.*, (
 							SELECT MAX(total.weight) FROM (
@@ -207,39 +216,75 @@ export const watchlistTools = {
 								UNION ALL
 								SELECT weight FROM watchlist_theme_items WHERE watchlistId = w.id
 								UNION ALL
-								SELECT 0 as weight -- 兜底，防止没有任何分类时 weight 为空
+								SELECT 0 as weight
 							) total
 						) as globalWeight
 						FROM watchlist w
 						WHERE w.userId = ? AND w.isDeleted = 0
-						ORDER BY globalWeight DESC, w.sortOrder DESC, w.createdAt DESC
+						ORDER BY globalWeight DESC, w.sortOrder ASC
 					`;
 				}
 
 				const stocks = db.prepare(query).all(...params) as WatchlistRow[];
-
-				// 补全分类名字（无论结果是什么，都带上所属维度，方便前端展示）
 				const fullList = stocks.map(stock => {
 					const industries = db.prepare(`
 						SELECT c.name FROM watchlist_categories c
 						JOIN watchlist_industry_items i ON c.id = i.categoryId
 						WHERE i.watchlistId = ? ORDER BY i.weight DESC
 					`).all(stock.id) as { name: string }[];
-
 					const themes = db.prepare(`
 						SELECT c.name FROM watchlist_categories c
 						JOIN watchlist_theme_items t ON c.id = t.categoryId
 						WHERE t.watchlistId = ? ORDER BY t.weight DESC
 					`).all(stock.id) as { name: string }[];
-
 					return {
 						...stock,
 						industries: industries.map(i => i.name),
 						themes: themes.map(t => t.name)
 					};
 				});
-
 				return JSON.stringify({ success: true, data: fullList });
+			} catch (e: any) {
+				return JSON.stringify({ success: false, error: e.message });
+			}
+		}
+	},
+
+	get_thematic_dashboard: {
+		name: "get_thematic_dashboard",
+		description: "获取聚合后的主题/行业看板数据",
+		parameters: z.object({}),
+		execute: async (_args: {}, ctx: { userId: string }) => {
+			try {
+				const db = getDB();
+				const uId = String(ctx.userId);
+				const industryData = db.prepare(`
+					SELECT c.name as category_name, i.weight, w.stockCode
+					FROM watchlist_categories c
+					JOIN watchlist_industry_items i ON c.id = i.categoryId
+					JOIN watchlist w ON i.watchlistId = w.id
+					WHERE i.userId = ? AND w.isDeleted = 0
+				`).all(uId) as any[];
+				const themeData = db.prepare(`
+					SELECT c.name as category_name, t.weight, w.stockCode
+					FROM watchlist_categories c
+					JOIN watchlist_theme_items t ON c.id = t.categoryId
+					JOIN watchlist w ON t.watchlistId = w.id
+					WHERE t.userId = ? AND w.isDeleted = 0
+				`).all(uId) as any[];
+				const combined = [...industryData, ...themeData];
+				const aggMap = new Map<string, { category_name: string, weight_total: number, stocks: string[] }>();
+				combined.forEach(item => {
+					const name = item.category_name;
+					const existing: { category_name: string, weight_total: number, stocks: string[] } = aggMap.get(name) || { category_name: name, weight_total: 0, stocks: [] };
+					existing.weight_total += (item.weight || 0);
+					if (!existing.stocks.includes(item.stockCode)) {
+						existing.stocks.push(item.stockCode);
+					}
+					aggMap.set(name, existing);
+				});
+				const result = Array.from(aggMap.values()).sort((a, b) => b.weight_total - a.weight_total);
+				return JSON.stringify({ success: true, data: result });
 			} catch (e: any) {
 				return JSON.stringify({ success: false, error: e.message });
 			}
@@ -248,38 +293,31 @@ export const watchlistTools = {
 
 	get_watchlist_tabs: {
 		name: "get_watchlist_tabs",
-		description: "获取自选股的有效分类页签",
+		description: "获取分类页签",
 		parameters: z.object({}),
 		execute: async (_args: {}, ctx: { userId: string }) => {
 			try {
 				const db = getDB();
 				const uId = String(ctx.userId);
-
-				// 1. 获取有股票的行业
 				const industries = db.prepare(`
-					SELECT DISTINCT c.id, c.name, c.type, c.weight
+					SELECT DISTINCT c.id, c.name, c.type, c.sortOrder
 					FROM watchlist_categories c
 					JOIN watchlist_industry_items i ON c.id = i.categoryId
 					WHERE i.userId = ?
-					ORDER BY c.weight DESC, c.name ASC
+					ORDER BY c.sortOrder ASC, c.name ASC
 				`).all(uId) as any[];
-
-				// 2. 获取有股票的主题
 				const themes = db.prepare(`
-					SELECT DISTINCT c.id, c.name, c.type, c.weight
+					SELECT DISTINCT c.id, c.name, c.type, c.sortOrder
 					FROM watchlist_categories c
 					JOIN watchlist_theme_items t ON c.id = t.categoryId
 					WHERE t.userId = ?
-					ORDER BY c.weight DESC, c.name ASC
+					ORDER BY c.sortOrder ASC, c.name ASC
 				`).all(uId) as any[];
-
-				// 组装 Tab 列表
 				const tabs = [
-					{ id: "all", name: "所有", type: "all" },
+					{ id: "all", name: "全部", type: "all" },
 					...industries.map(i => ({ id: i.id, name: i.name, type: "industry" })),
 					...themes.map(t => ({ id: t.id, name: t.name, type: "theme" }))
 				];
-
 				return JSON.stringify({ success: true, data: tabs });
 			} catch (e: any) {
 				return JSON.stringify({ success: false, error: e.message });
@@ -287,55 +325,66 @@ export const watchlistTools = {
 		}
 	},
 
+	smart_reorder_watchlist: {
+		name: "smart_reorder_watchlist",
+		description: "触发 AI 智能排序",
+		parameters: z.object({}),
+		execute: async (_args: {}, ctx: { userId: string, runtime?: PluginRuntime }) => {
+			if (!ctx.runtime) return JSON.stringify({ success: false, error: "Runtime not available" });
+			const db = getDB();
+			const uId = String(ctx.userId);
+			try {
+				const stocks = db.prepare("SELECT stockCode as code, stockName as name FROM watchlist WHERE userId = ? AND isDeleted = 0").all(uId) as any[];
+				if (stocks.length === 0) return JSON.stringify({ success: true, message: "没有可排序的股票" });
+				const sortedResults = await watchlistLogic.applySmartSort(ctx.runtime, `sort-${uId}`, stocks);
+				if (sortedResults.length > 0) {
+					db.exec("BEGIN TRANSACTION");
+					const stmt = db.prepare(`
+						UPDATE watchlist SET sortOrder = ?, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
+						WHERE userId = ? AND stockCode = ? AND isDeleted = 0
+					`);
+					sortedResults.forEach((item: any, i: number) => {
+						const currentOrder = i * 10; 
+						stmt.run(currentOrder, uId, item.code);
+					});
+					db.exec("COMMIT");
+					return JSON.stringify({ success: true, message: "智能排序已完成" });
+				}
+				return JSON.stringify({ success: false, error: "AI 未能返回有效的排序结果" });
+			} catch (e: any) {
+				if (db.inTransaction) db.exec("ROLLBACK");
+				return JSON.stringify({ success: false, error: e.message });
+			}
+		}
+	},
+
 	sync_watchlist_categories: {
 		name: "sync_watchlist_categories",
-		description: "同步行业或主题分类字典数据",
-		parameters: z.object({
-			industries: z.array(z.object({
-				remoteId: z.string(),
-				name: z.string(),
-				weight: z.number().optional()
-			})).optional(),
-			themes: z.array(z.object({
-				remoteId: z.string(),
-				name: z.string(),
-				weight: z.number().optional()
-			})).optional()
-		}),
-		execute: async (args: { industries?: any[], themes?: any[] }, ctx: { userId: string }) => {
+		description: "同步分类字典",
+		parameters: SyncCategoriesParamsSchema,
+		execute: async (args: SyncCategoriesParams, ctx: { userId: string }) => {
 			const db = getDB();
 			const uId = String(ctx.userId);
 			db.exec("BEGIN TRANSACTION");
 			try {
-				// 处理行业同步
 				if (args.industries) {
-					for (const ind of args.industries) {
+					for (const name of args.industries) {
 						db.prepare(`
-							INSERT INTO watchlist_categories (id, remoteId, userId, name, type, weight)
-							VALUES (?, ?, ?, ?, 'industry', ?)
-							ON CONFLICT(userId, remoteId) DO UPDATE SET
-								name = excluded.name,
-								weight = excluded.weight,
-								updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
-							ON CONFLICT(userId, name, type) DO UPDATE SET
-								remoteId = excluded.remoteId,
-								weight = excluded.weight
-						`).run(randomUUID(), String(ind.remoteId), uId, ind.name, ind.weight ?? 0);
+							INSERT INTO watchlist_categories (id, remoteId, userId, name, type, weight, sortOrder)
+							VALUES (?, ?, ?, ?, 'industry', 0, 0)
+							ON CONFLICT(userId, remoteId) DO UPDATE SET name = excluded.name, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
+							ON CONFLICT(userId, name, type) DO UPDATE SET remoteId = excluded.remoteId, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
+						`).run(randomUUID(), name, uId, name);
 					}
 				}
-				// 处理主题同步
 				if (args.themes) {
-					for (const thm of args.themes) {
+					for (const name of args.themes) {
 						db.prepare(`
-							INSERT INTO watchlist_categories (id, remoteId, userId, name, type, weight)
-							VALUES (?, ?, ?, ?, 'theme', ?)
-							ON CONFLICT(userId, remoteId) DO UPDATE SET
-								name = excluded.name,
-								weight = excluded.weight
-							ON CONFLICT(userId, name, type) DO UPDATE SET
-								remoteId = excluded.remoteId,
-								weight = excluded.weight
-						`).run(randomUUID(), String(thm.remoteId), uId, thm.name, thm.weight ?? 0);
+							INSERT INTO watchlist_categories (id, remoteId, userId, name, type, weight, sortOrder)
+							VALUES (?, ?, ?, ?, 'theme', 0, 0)
+							ON CONFLICT(userId, remoteId) DO UPDATE SET name = excluded.name, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
+							ON CONFLICT(userId, name, type) DO UPDATE SET remoteId = excluded.remoteId, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
+						`).run(randomUUID(), name, uId, name);
 					}
 				}
 				db.exec("COMMIT");
@@ -349,23 +398,68 @@ export const watchlistTools = {
 
 	batch_update_sort_orders: {
 		name: "batch_update_sort_orders",
-		description: "根据顺序批量更新排序",
-		parameters: z.object({ orderedIds: z.array(z.string()) }),
-		execute: async (args: { orderedIds: string[] }, ctx: { userId: string }) => {
+		description: "批量更新排序",
+		parameters: BatchUpdateSortOrdersParamsSchema,
+		execute: async (args: BatchUpdateSortOrdersParams, ctx: { userId: string }) => {
 			const db = getDB();
 			const uId = String(ctx.userId);
 			db.exec("BEGIN TRANSACTION");
 			try {
-				const stmt = db.prepare(`
-            UPDATE watchlist SET sortOrder = ?, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
-            WHERE id = ? AND userId = ? AND isDeleted = 0
-				`);
+				const stmt = db.prepare(`UPDATE watchlist SET sortOrder = ?, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW') WHERE id = ? AND userId = ? AND isDeleted = 0`);
 				args.orderedIds.forEach((id, i) => {
-					const weight = (args.orderedIds.length - i) * 1024;
+					const weight = i * 1024;
 					stmt.run(weight, id, uId);
 				});
 				db.exec("COMMIT");
 				return JSON.stringify({ success: true });
+			} catch (e: any) {
+				db.exec("ROLLBACK");
+				return JSON.stringify({ success: false, error: e.message });
+			}
+		}
+	},
+
+	reset_watchlist_classification: {
+		name: "reset_watchlist_classification",
+		description: "清除并重新进行智能分类",
+		parameters: z.object({}),
+		execute: async (_args: {}, ctx: { userId: string, runtime?: PluginRuntime }) => {
+			if (!ctx.runtime) return JSON.stringify({ success: false, error: "Runtime not available" });
+			const db = getDB();
+			const uId = String(ctx.userId);
+			db.exec("BEGIN TRANSACTION");
+			try {
+				db.prepare("DELETE FROM watchlist_industry_items WHERE userId = ?").run(uId);
+				db.prepare("DELETE FROM watchlist_theme_items WHERE userId = ?").run(uId);
+				const stocks = db.prepare("SELECT stockName, stockCode, exchange FROM watchlist WHERE userId = ? AND isDeleted = 0").all(uId) as any[];
+				if (stocks.length > 0) {
+					watchlistLogic.getBatchStockClassification(ctx.runtime, stocks, uId)
+						.then(batchResults => {
+							const db2 = getDB();
+							const userStocks = db2.prepare("SELECT id, stockCode, exchange FROM watchlist WHERE userId = ? AND isDeleted = 0").all(uId) as any[];
+							batchResults.forEach((res, i) => {
+								if (res) {
+									const s = stocks[i];
+									const match = userStocks.find(us => us.stockCode === s.stockCode && us.exchange === s.exchange);
+									if (match) {
+										const cats = [
+											{ name: res.industry.name, type: 'industry' as const, weight: res.industry.weight },
+											...res.theme.map((t: any) => ({ name: t.name, type: 'theme' as const, weight: t.weight }))
+										];
+										cats.forEach(c => {
+											const catId = watchlistLogic._ensureCategory(db2, c.name, c.type, uId);
+											if (catId) {
+												const table = c.type === 'industry' ? 'watchlist_industry_items' : 'watchlist_theme_items';
+												db2.prepare(`INSERT OR IGNORE INTO ${table} (id, watchlistId, userId, categoryId, weight) VALUES (?, ?, ?, ?, ?)`).run(randomUUID(), match.id, uId, catId, c.weight);
+											}
+										});
+									}
+								}
+							});
+						}).catch(err => console.error("[Watchlist] 重置分类失败:", err));
+				}
+				db.exec("COMMIT");
+				return JSON.stringify({ success: true, message: "重置分类请求已提交" });
 			} catch (e: any) {
 				db.exec("ROLLBACK");
 				return JSON.stringify({ success: false, error: e.message });
