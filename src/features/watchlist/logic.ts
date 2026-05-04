@@ -209,7 +209,7 @@ export const watchlistLogic = {
 
 	async _callEmbeddedAi(rt: PluginRuntime, sessionId: string, prompt: string, timeoutMs: number): Promise<string> {
 		const fullCfg = rt.config.loadConfig();
-		const workspaceDir = rt.agent.resolveAgentWorkspaceDir(fullCfg, "ciwei-ai");
+		const workspaceDir = rt.agent.resolveAgentWorkspaceDir(fullCfg, "hedgehog-workspace");
 		const sessionFile = path.join(workspaceDir, "data", "sessions", `${sessionId}.json`);
 		let provider: string | undefined;
 		let model: string | undefined;
@@ -220,7 +220,7 @@ export const watchlistLogic = {
 			if (typeof modelCfg === 'string') return modelCfg;
 			return (modelCfg as { primary?: string }).primary || null;
 		};
-		const modelRef = resolveModelRef("ciwei-ai") || resolveModelRef(fullCfg.agents?.list?.[0]?.id || "");
+		const modelRef = resolveModelRef("hedgehog-workspace") || resolveModelRef(fullCfg.agents?.list?.[0]?.id || "");
 		if (modelRef) {
 			const parts = modelRef.split('/');
 			if (parts.length >= 2) {

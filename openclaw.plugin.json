@@ -1,11 +1,11 @@
 {
-  "id": "ciwei-ai",
+  "id": "hedgehog-finance",
   "kind": "channel",
   "channels": [
-    "ciwei-ai"
+    "hedgehog-finance"
   ],
-  "name": "Ciwei AI Comprehensive Plugin",
-  "description": "WebSocket Channel & Watchlist SQLite Tools",
+  "name": "Hedgehog Finance Comprehensive Plugin",
+  "description": "WebSocket Channel & Watchlist SQLite Tools for Hedgehog App",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

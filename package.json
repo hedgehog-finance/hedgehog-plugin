@@ -1,16 +1,16 @@
 {
-  "name": "@hedgehog2026/ciwei-ai",
+  "name": "@hedgehog-finance/hedgehog-plugin",
   "version": "1.0.11",
-  "description": "ciwei AI WebSocket channel for OpenClaw",
+  "description": "Hedgehog App WebSocket channel and Watchlist Tools for OpenClaw",
   "keywords": [
     "bot",
     "channel",
     "clawdbot",
     "openclaw",
     "stream",
-    "ciwei-ai"
+    "hedgehog-app"
   ],
-  "repository": "github:hedgehog-finance/ciwei-ai",
+  "repository": "github:hedgehog-finance/hedgehog-plugin",
   "main": "index.ts",
   "type": "module",
   "author": "Hedgehog Finance",
@@ -23,6 +23,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
+    "@types/ws": "^8.5.10",
     "typescript": "^5.3.3"
   },
   "openclaw": {
@@ -31,7 +32,7 @@
       "./index.ts"
     ],
     "install": {
-      "npmSpec": "@hedgehog2026/ciwei-ai",
+      "npmSpec": "@hedgehog-finance/hedgehog-plugin",
       "defaultChoice": "npm"
     },
     "compat": {

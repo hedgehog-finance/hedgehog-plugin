@@ -7,17 +7,17 @@ let runtime: PluginRuntime | null = null;
 let dbPath: string = "";
 let backupDir: string = "";
 
-export function setCiweiAIRuntime(next: PluginRuntime): void {
+export function setHedgehogRuntime(next: PluginRuntime): void {
 	runtime = next;
 
 	try {
-		// 从配置里读取 ciwei-ai 的 workspace
+		// 从配置里读取 hedgehog-workspace 的 workspace
 		const cfg = next.config.loadConfig();
 		const agentList = (cfg.agents?.list || []) as { id: string, workspace?: string }[];
-		const ciweiAgent = agentList.find((a) => a.id === "ciwei-ai");
-		const workspaceDir = ciweiAgent?.workspace ||
+		const hedgehogAgent = agentList.find((a) => a.id === "hedgehog-workspace");
+		const workspaceDir = hedgehogAgent?.workspace ||
 			cfg.agents?.defaults?.workspace ||
-			path.join(os.homedir(), ".openclaw", "ciwei-ai");
+			path.join(os.homedir(), ".openclaw", "hedgehog-workspace");
 
 		dbPath = path.join(workspaceDir, "data", "business.db");
 		backupDir = path.join(workspaceDir, "backups");
@@ -28,16 +28,16 @@ export function setCiweiAIRuntime(next: PluginRuntime): void {
 }
 
 export function getDbPath(): string {
-	if (!dbPath) throw new Error("[Ciwei-AI] dbPath not initialized");
+	if (!dbPath) throw new Error("[hedgehog-app] dbPath not initialized");
 	return dbPath;
 }
 
 export function getBackupDir(): string {
-	if (!backupDir) throw new Error("[Ciwei-AI] backupDir not initialized");
+	if (!backupDir) throw new Error("[hedgehog-app] backupDir not initialized");
 	return backupDir;
 }
 
-export function getCiweiAIRuntime(): PluginRuntime {
-	if (!runtime) throw new Error("[Ciwei-AI] runtime not initialized");
+export function getHedgehogRuntime(): PluginRuntime {
+	if (!runtime) throw new Error("[hedgehog-app] runtime not initialized");
 	return runtime;
 }

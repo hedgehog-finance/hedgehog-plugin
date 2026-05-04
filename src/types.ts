@@ -1,9 +1,9 @@
 import { z } from "zod";
 
 /**
- * Ciwei AI Resolved Account
+ * Hedgehog Finance Resolved Account
  */
-export interface CiweiAIResolvedAccount {
+export interface HedgehogFinanceResolvedAccount {
     accountId: string;
     config: {
         token: string;

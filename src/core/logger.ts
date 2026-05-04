@@ -15,7 +15,7 @@ export const logger = pino({
         },
       },
   base: {
-    name: 'ciwei-ai',
+    name: 'hedgehog-app',
   },
 });
 

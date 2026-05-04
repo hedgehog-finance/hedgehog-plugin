@@ -11,10 +11,10 @@ import type {
 	ChannelAccountSnapshot,
 	ChannelStatusIssue
 } from "openclaw/plugin-sdk/channel-contract";
-import { getCiweiAIRuntime } from "./runtime";
+import { getHedgehogRuntime } from "./runtime";
 import { logger } from "./core/logger";
 import type {
-	CiweiAIResolvedAccount,
+	HedgehogFinanceResolvedAccount,
 	RelayInboundMessage
 } from "./types";
 import { allFeaturesTools } from "./features";
@@ -189,16 +189,16 @@ async function getCurrentTurnUsageAsync(
 }
 
 /**
- * Ciwei AI Channel Plugin
+ * Hedgehog Finance Channel Plugin
  */
-export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
-	id: "ciwei-ai",
+export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount> = {
+	id: "hedgehog-finance",
 
 	meta: {
-		id: "ciwei-ai",
-		label: "Ciwei AI",
-		selectionLabel: "Ciwei AI",
-		blurb: "Custom WebSocket relay channel for Ciwei AI",
+		id: "hedgehog-finance",
+		label: "Hedgehog Finance",
+		selectionLabel: "Hedgehog Finance",
+		blurb: "Custom WebSocket relay channel for Hedgehog App",
 		docsPath: "",
 		order: 100,
 	},
@@ -215,7 +215,7 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 
 	config: {
 		listAccountIds: (cfg: OpenClawConfig): string[] => {
-			const channelConfig = (cfg.channels?.['ciwei-ai'] || {}) as any;
+			const channelConfig = (cfg.channels?.['hedgehog-finance'] || {}) as any;
 
 			if (channelConfig.accounts) {
 				if (Array.isArray(channelConfig.accounts)) {
@@ -231,8 +231,8 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 			return ["default"];
 		},
 
-		resolveAccount: (cfg: OpenClawConfig, accountId?: string | null): CiweiAIResolvedAccount => {
-			const channelConfig = (cfg.channels?.['ciwei-ai'] || {}) as any;
+		resolveAccount: (cfg: OpenClawConfig, accountId?: string | null): HedgehogFinanceResolvedAccount => {
+			const channelConfig = (cfg.channels?.['hedgehog-finance'] || {}) as any;
 			const id = accountId || channelConfig.accountId || "default";
 
 			let accountInfo: any;
@@ -267,15 +267,15 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 		},
 
 		defaultAccountId: (cfg: OpenClawConfig): string => {
-			const channelConfig = (cfg as any)?.channels?.['ciwei-ai'];
+			const channelConfig = (cfg as any)?.channels?.['hedgehog-finance'];
 			return channelConfig?.accountId || "default";
 		},
 	},
 
 	gateway: {
-		startAccount: async (ctx: ChannelGatewayContext<CiweiAIResolvedAccount>) => {
+		startAccount: async (ctx: ChannelGatewayContext<HedgehogFinanceResolvedAccount>) => {
 			const { account, cfg, log, abortSignal } = ctx;
-			const rt = getCiweiAIRuntime();
+			const rt = getHedgehogRuntime();
 			const accountId = String(account.accountId);
 			const childLogger = logger.child({ accountId });
 			const token = account.config.token || "";
@@ -394,7 +394,7 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 
 					const route = rt.channel.routing.resolveAgentRoute({
 						cfg,
-						channel: "ciwei-ai",
+						channel: "hedgehog-finance",
 						accountId: String(accountId),
 						peer: { kind: "direct", id: chatId },
 					});
@@ -417,7 +417,7 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 						AccountId: route.accountId,
 						AgentId: agentId,
 						AgentWorkspace: (route as any).agentWorkspace,
-						Provider: "ciwei-ai",
+						Provider: "hedgehog-finance",
 						MessageSid: id,
 					});
 
@@ -427,7 +427,7 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 						ctx: context,
 						updateLastRoute: {
 							sessionKey: route.mainSessionKey,
-							channel: "ciwei-ai",
+							channel: "hedgehog-finance",
 							to: chatId,
 							accountId: String(accountId),
 						},
@@ -629,7 +629,7 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 			connect();
 
 			abortSignal?.addEventListener("abort", () => {
-				log?.info?.(`[ciwei-ai][${accountId}] Abort signal received`);
+				log?.info?.(`[hedgehog-app][${accountId}] Abort signal received`);
 				stopClient();
 			});
 
@@ -657,7 +657,7 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 				if (!account.configured) {
 					return [
 						{
-							channel: "ciwei-ai",
+							channel: "hedgehog-finance",
 							accountId: account.accountId,
 							kind: "config" as const,
 							message: "Account not configured (missing relay token)",
@@ -674,14 +674,14 @@ export const ciweiAIPlugin: ChannelPlugin<CiweiAIResolvedAccount> = {
 			lastStopAt: snapshot?.lastStopAt ?? null,
 			lastError: snapshot?.lastError ?? null,
 		}),
-		probeAccount: async ({ account }: { account: CiweiAIResolvedAccount }) => {
+		probeAccount: async ({ account }: { account: HedgehogFinanceResolvedAccount }) => {
 			if (!account.configured || !account.config?.token) {
 				return { ok: false, error: "Token not configured" };
 			}
 			return { ok: true, details: { relay: "wss://relay.ciweiai.com/relay" } };
 		},
 		buildAccountSnapshot: ({ account, runtime, snapshot, probe }: {
-			account: CiweiAIResolvedAccount,
+			account: HedgehogFinanceResolvedAccount,
 			runtime?: ChannelAccountSnapshot,
 			snapshot?: ChannelAccountSnapshot,
 			probe?: any
