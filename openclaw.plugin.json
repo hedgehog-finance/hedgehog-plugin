@@ -1,8 +1,8 @@
 {
-  "id": "hedgehog-finance",
+  "id": "hedgehog_finance",
   "kind": "channel",
   "channels": [
-    "hedgehog-finance"
+    "hedgehog_finance"
   ],
   "name": "Hedgehog Finance Comprehensive Plugin",
   "description": "WebSocket Channel & Watchlist SQLite Tools for Hedgehog App",

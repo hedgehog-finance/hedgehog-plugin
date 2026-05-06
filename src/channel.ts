@@ -192,10 +192,10 @@ async function getCurrentTurnUsageAsync(
  * Hedgehog Finance Channel Plugin
  */
 export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount> = {
-	id: "hedgehog-finance",
+	id: "hedgehog_finance",
 
 	meta: {
-		id: "hedgehog-finance",
+		id: "hedgehog_finance",
 		label: "Hedgehog Finance",
 		selectionLabel: "Hedgehog Finance",
 		blurb: "Custom WebSocket relay channel for Hedgehog App",
@@ -215,7 +215,7 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 
 	config: {
 		listAccountIds: (cfg: OpenClawConfig): string[] => {
-			const channelConfig = (cfg.channels?.['hedgehog-finance'] || {}) as any;
+			const channelConfig = (cfg.channels?.['hedgehog_finance'] || {}) as any;
 
 			if (channelConfig.accounts) {
 				if (Array.isArray(channelConfig.accounts)) {
@@ -232,7 +232,7 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 		},
 
 		resolveAccount: (cfg: OpenClawConfig, accountId?: string | null): HedgehogFinanceResolvedAccount => {
-			const channelConfig = (cfg.channels?.['hedgehog-finance'] || {}) as any;
+			const channelConfig = (cfg.channels?.['hedgehog_finance'] || {}) as any;
 			const id = accountId || channelConfig.accountId || "default";
 
 			let accountInfo: any;
@@ -267,7 +267,7 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 		},
 
 		defaultAccountId: (cfg: OpenClawConfig): string => {
-			const channelConfig = (cfg as any)?.channels?.['hedgehog-finance'];
+			const channelConfig = (cfg as any)?.channels?.['hedgehog_finance'];
 			return channelConfig?.accountId || "default";
 		},
 	},
@@ -394,7 +394,7 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 
 					const route = rt.channel.routing.resolveAgentRoute({
 						cfg,
-						channel: "hedgehog-finance",
+						channel: "hedgehog_finance",
 						accountId: String(accountId),
 						peer: { kind: "direct", id: chatId },
 					});
@@ -417,7 +417,7 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 						AccountId: route.accountId,
 						AgentId: agentId,
 						AgentWorkspace: (route as any).agentWorkspace,
-						Provider: "hedgehog-finance",
+						Provider: "hedgehog_finance",
 						MessageSid: id,
 					});
 
@@ -427,7 +427,7 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 						ctx: context,
 						updateLastRoute: {
 							sessionKey: route.mainSessionKey,
-							channel: "hedgehog-finance",
+							channel: "hedgehog_finance",
 							to: chatId,
 							accountId: String(accountId),
 						},
@@ -657,7 +657,7 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 				if (!account.configured) {
 					return [
 						{
-							channel: "hedgehog-finance",
+							channel: "hedgehog_finance",
 							accountId: account.accountId,
 							kind: "config" as const,
 							message: "Account not configured (missing relay token)",

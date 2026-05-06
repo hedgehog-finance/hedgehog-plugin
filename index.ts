@@ -4,7 +4,7 @@ import { setHedgehogRuntime } from "./src/runtime";
 import { allFeaturesTools } from "./src/features";
 
 export default defineChannelPluginEntry({
-	id: "hedgehog-finance",
+	id: "hedgehog_finance",
 	name: "Hedgehog Finance Comprehensive Plugin",
 	description: "WebSocket Channel & Watchlist SQLite Tools for Hedgehog App",
 	plugin: hedgehogFinancePlugin,
