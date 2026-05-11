@@ -11,10 +11,10 @@ export function setHedgehogRuntime(next: PluginRuntime): void {
 	runtime = next;
 
 	try {
-		// 从配置里读取 hedgehog-workspace 的 workspace
+		// 从配置里读取 hedgehog-finance 的 workspace
 		const cfg = next.config.loadConfig();
 		const agentList = (cfg.agents?.list || []) as { id: string, workspace?: string }[];
-		const hedgehogAgent = agentList.find((a) => a.id === "hedgehog-workspace");
+		const hedgehogAgent = agentList.find((a) => a.id === "hedgehog-finance");
 		const workspaceDir = hedgehogAgent?.workspace ||
 			cfg.agents?.defaults?.workspace ||
 			path.join(os.homedir(), ".openclaw", "hedgehog-workspace");

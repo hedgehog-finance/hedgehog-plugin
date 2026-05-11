@@ -24,10 +24,7 @@ export const AddToWatchlistParamsSchema = z.object({
 	stockCode: z.string(),
 	stockName: z.string(),
 	exchange: ExchangeEnum,
-	market: MarketEnum,
-	// 支持：1. 字符串 "白酒" 2. 数组 ["白酒"] 3. 带权重的对象 { name: "白酒", weight: 99 }
-	industry: z.union([z.string(), z.array(z.string()), z.any()]).optional(),
-	theme: z.union([z.string(), z.array(z.string()), z.any()]).optional()
+	market: MarketEnum
 });
 
 export type AddToWatchlistParams = z.infer<typeof AddToWatchlistParamsSchema>;
@@ -63,5 +60,3 @@ export interface CategoryRow {
 	type?: 'industry' | 'theme';
 	weight?: number;
 }
-
-export type TagInput = string | string[] | { name: string; weight?: number } | { name: string; weight?: number }[];

@@ -346,6 +346,18 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 						if (!method) return;
 
 						// 从中央工具注册表中查找方法
+						if (method === "ping") {
+							if (ws?.readyState === WebSocket.OPEN) {
+								ws.send(JSON.stringify({
+									type: "res",
+									id: id,
+									ok: true,
+									payload: { success: true }
+								}));
+							}
+							return;
+						}
+
 						const tool = allFeaturesTools[method];
 
 						if (tool && typeof tool.execute === 'function') {
@@ -386,6 +398,16 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 							}
 							return;
 						}
+
+						if (ws?.readyState === WebSocket.OPEN) {
+							ws.send(JSON.stringify({
+								type: "res",
+								id: id,
+								ok: false,
+								error: { message: `Unknown RPC method: ${method}` }
+							}));
+						}
+						return;
 					}
 
 					const { from, text, chatId, id } = appPayload;

@@ -13,6 +13,7 @@ export interface RuntimeTool {
     label?: string;
     description: string;
     parameters: unknown;
+    registerTool?: boolean;
     // bivariant method signature — allows specific param types
     execute(params: unknown, ctx: { userId: string }): Promise<string>;
 }

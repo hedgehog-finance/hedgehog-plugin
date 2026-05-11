@@ -14,6 +14,7 @@ export default defineChannelPluginEntry({
 	registerFull(api) {
 		// 1. 自动化循环注册 Tool
 		Object.entries(allFeaturesTools).forEach(([name, tool]) => {
+			if (tool.registerTool === false) return;
 			const registerable = { ...tool, label: tool.description };
 			api.registerTool(registerable as any, { name });
 		});
@@ -21,4 +22,3 @@ export default defineChannelPluginEntry({
 		api.logger.info("[hedgehog-app] Registered tools and runtime context.");
 	},
 });
-

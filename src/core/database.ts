@@ -59,6 +59,92 @@ function startDailyBackupJob() {
 	scheduleNextBackup();
 }
 
+function normalizeMetadataStockCode(stockCode: string, exchange: string): string {
+	const code = String(stockCode || "").trim().toUpperCase();
+	if (/\.(SH|SS|SZ|HK|US)$/i.test(code)) {
+		return code.replace(/\.SS$/i, ".SH");
+	}
+	switch (exchange) {
+		case "SSE":
+			return `${code}.SH`;
+		case "SZSE":
+			return `${code}.SZ`;
+		case "HKEX":
+			return `${code}.HK`;
+		default:
+			return code;
+	}
+}
+
+function runWatchlistDedupMigrations(db: DatabaseSync) {
+	db.exec("BEGIN TRANSACTION");
+	try {
+		const metadataRows = db.prepare(`
+			SELECT stockCode, exchange FROM global_stock_metadata
+		`).all() as { stockCode: string; exchange: string }[];
+		const metadataDeleteStmt = db.prepare(`
+			DELETE FROM global_stock_metadata WHERE stockCode = ? AND exchange = ?
+		`);
+		const metadataUpdateStmt = db.prepare(`
+			UPDATE global_stock_metadata SET stockCode = ? WHERE stockCode = ? AND exchange = ?
+		`);
+		const metadataExistsStmt = db.prepare(`
+			SELECT 1 FROM global_stock_metadata WHERE stockCode = ? AND exchange = ?
+		`);
+		for (const row of metadataRows) {
+			const normalizedCode = normalizeMetadataStockCode(row.stockCode, row.exchange);
+			if (!normalizedCode || normalizedCode === row.stockCode) continue;
+			const existing = metadataExistsStmt.get(normalizedCode, row.exchange);
+			if (existing) {
+				metadataDeleteStmt.run(row.stockCode, row.exchange);
+			} else {
+				metadataUpdateStmt.run(normalizedCode, row.stockCode, row.exchange);
+			}
+		}
+
+		const duplicateCategories = db.prepare(`
+			SELECT userId, name, type, MIN(id) AS keepId, GROUP_CONCAT(id) AS ids
+			FROM watchlist_categories
+			GROUP BY userId, name, type
+			HAVING COUNT(*) > 1
+		`).all() as { userId: string; name: string; type: 'industry' | 'theme'; keepId: string; ids: string }[];
+		for (const dup of duplicateCategories) {
+			const table = dup.type === 'industry' ? 'watchlist_industry_items' : 'watchlist_theme_items';
+			const ids = dup.ids.split(",").filter(id => id && id !== dup.keepId);
+			for (const oldId of ids) {
+				db.prepare(`UPDATE ${table} SET categoryId = ? WHERE userId = ? AND categoryId = ?`).run(dup.keepId, dup.userId, oldId);
+				db.prepare("DELETE FROM watchlist_categories WHERE id = ?").run(oldId);
+			}
+		}
+
+		db.exec(`
+			DELETE FROM watchlist_industry_items
+			WHERE rowid NOT IN (
+				SELECT MIN(rowid) FROM watchlist_industry_items GROUP BY watchlistId, categoryId
+			);
+
+			DELETE FROM watchlist_theme_items
+			WHERE rowid NOT IN (
+				SELECT MIN(rowid) FROM watchlist_theme_items GROUP BY watchlistId, categoryId
+			);
+		`);
+
+		db.exec("COMMIT");
+	} catch (e) {
+		if (db.inTransaction) db.exec("ROLLBACK");
+		throw e;
+	}
+
+	db.exec(`
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_watchlist_categories_user_name_type
+			ON watchlist_categories(userId, name, type);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_watchlist_industry_items_watchlist_category
+			ON watchlist_industry_items(watchlistId, categoryId);
+		CREATE UNIQUE INDEX IF NOT EXISTS idx_watchlist_theme_items_watchlist_category
+			ON watchlist_theme_items(watchlistId, categoryId);
+	`);
+}
+
 export function getDB(): DatabaseSync {
 	if (!_db) {
 		const dbPath = getDbPath();
@@ -141,6 +227,7 @@ export function getDB(): DatabaseSync {
 		CREATE INDEX IF NOT EXISTS idx_watchlist_theme_user ON watchlist_theme_items(userId);
 		`);
 
+		runWatchlistDedupMigrations(_db);
 	}
 	return _db;
 }

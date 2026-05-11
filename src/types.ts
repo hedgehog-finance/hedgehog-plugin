@@ -62,7 +62,7 @@ export const StockClassificationSchema = z.object({
     industry: z.object({
         name: z.string(),
         weight: z.number().min(0).max(100).default(50)
-    }).describe("Main industry category with weight"),
+    }).describe("Required main industry category with weight"),
     theme: z.array(z.object({
         name: z.string(),
         weight: z.number().min(0).max(100).default(50)

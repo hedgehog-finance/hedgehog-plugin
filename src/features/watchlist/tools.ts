@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { z } from "openclaw/plugin-sdk/zod";
 import { PluginRuntime } from "openclaw/plugin-sdk";
 import { getDB } from "../../core/database";
+import { logger } from "../../core/logger";
 import { watchlistLogic } from "./logic";
 import {
 	AddToWatchlistParams,
@@ -12,7 +13,6 @@ import {
 	UpdateWatchlistItemSchema,
 	WatchlistRow,
 	CategoryRow,
-	TagInput,
 	GetWatchlistParams,
 	GetWatchlistParamsSchema,
 	SyncCategoriesParams,
@@ -21,25 +21,56 @@ import {
 	BatchUpdateSortOrdersParamsSchema
 } from "./schema";
 
+let watchlistMutationQueue: Promise<void> = Promise.resolve();
+
+function enqueueWatchlistMutation<T>(task: () => Promise<T>): Promise<T> {
+	const previous = watchlistMutationQueue;
+	let release!: () => void;
+	watchlistMutationQueue = new Promise<void>((resolve) => {
+		release = resolve;
+	});
+
+	return previous
+		.catch(() => undefined)
+		.then(task)
+		.finally(release);
+}
+
 /**
  * 辅助函数：统一处理归一化分类项
  */
-function normalizeTags(input: TagInput | undefined): { name: string, weight: number }[] {
+function normalizeTags(input: { name: string; weight?: number } | { name: string; weight?: number }[] | null | undefined): { name: string, weight: number }[] {
 	if (!input) return [];
 	const items = Array.isArray(input) ? input : [input];
-	return items.map(item => {
-		if (typeof item === 'string') return { name: item, weight: 0 };
-		if (typeof item === 'object' && item !== null && 'name' in item) {
-			return { name: item.name, weight: item.weight ?? 0 };
-		}
-		return null;
-	}).filter((i): i is { name: string, weight: number } => i !== null);
+	return items
+		.filter((item): item is { name: string; weight?: number } => typeof item?.name === 'string' && item.name.trim().length > 0)
+		.map(item => ({ name: item.name, weight: item.weight ?? 0 }));
+}
+
+function normalizeWatchlistStock(stock: AddToWatchlistParams): AddToWatchlistParams {
+	return {
+		...stock,
+		stockCode: watchlistLogic._normalizeStockCodeForCache(stock.stockCode, stock.exchange)
+	};
+}
+
+function watchlistStockKey(stock: AddToWatchlistParams): string {
+	return `${watchlistLogic._normalizeStockCodeForCache(stock.stockCode, stock.exchange)}:${stock.exchange}`;
 }
 
 /**
  * 辅助函数：更新股票的分类标签
  */
-function updateWatchlistTags(db: DatabaseSync, watchlistId: string, userId: string, industry: TagInput | undefined, theme: TagInput | undefined) {
+function updateWatchlistTags(
+	db: DatabaseSync,
+	watchlistId: string,
+	userId: string,
+	industry: { name: string; weight?: number } | null | undefined,
+	theme: { name: string; weight?: number }[] | undefined
+) {
+	db.prepare("DELETE FROM watchlist_industry_items WHERE watchlistId = ? AND userId = ?").run(watchlistId, userId);
+	db.prepare("DELETE FROM watchlist_theme_items WHERE watchlistId = ? AND userId = ?").run(watchlistId, userId);
+
 	const normIndustries = normalizeTags(industry);
 	for (const item of normIndustries) {
 		const categoryId = watchlistLogic._ensureCategory(db, item.name, 'industry', userId);
@@ -63,77 +94,75 @@ function updateWatchlistTags(db: DatabaseSync, watchlistId: string, userId: stri
 	}
 }
 
+function upsertStockClassificationCache(
+	db: DatabaseSync,
+	stock: AddToWatchlistParams,
+	classification: {
+		industry: { name: string; weight?: number };
+		theme?: { name: string; weight?: number }[];
+	}
+) {
+	const cacheCode = watchlistLogic._normalizeStockCodeForCache(stock.stockCode, stock.exchange);
+	const legacyCode = stock.stockCode.trim().toUpperCase().replace(/\.(SH|SS|SZ|HK|US)$/i, "");
+	db.prepare(`
+		INSERT OR REPLACE INTO global_stock_metadata (stockCode, exchange, stockName, industryJson, themeJson)
+		VALUES (?, ?, ?, ?, ?)
+	`).run(
+		cacheCode,
+		stock.exchange,
+		stock.stockName,
+		JSON.stringify(classification.industry),
+		JSON.stringify(classification.theme || [])
+	);
+	if (legacyCode && legacyCode !== cacheCode) {
+		db.prepare(`
+			DELETE FROM global_stock_metadata WHERE stockCode = ? AND exchange = ?
+		`).run(legacyCode, stock.exchange);
+	}
+	logger.info({
+		stockCode: stock.stockCode,
+		cacheCode,
+		exchange: stock.exchange,
+		industry: classification.industry.name,
+		themeCount: classification.theme?.length || 0
+	}, "[Watchlist] classification cache upserted");
+}
+
 export const watchlistTools = {
 	add_to_watchlist: {
 		name: "add_to_watchlist",
 		description: "添加股票到自选列表",
 		parameters: AddToWatchlistParamsSchema,
+		registerTool: false,
 		execute: async (args: AddToWatchlistParams, ctx: { userId: string, runtime?: PluginRuntime }) => {
-			const db = getDB();
-			const uId = String(ctx.userId);
-			db.exec("BEGIN TRANSACTION");
-			try {
-				const sortRow = db.prepare("SELECT MAX(sortOrder) as max FROM watchlist WHERE userId=? AND isDeleted=0").get(uId) as { max: number } | undefined;
-				const nextOrder = (sortRow?.max ?? 0) + 1024;
-
-				let watchlistId: string;
-				const existingItem = db.prepare("SELECT id, isDeleted FROM watchlist WHERE userId = ? AND stockCode = ? AND exchange = ?").get(uId, args.stockCode, args.exchange) as WatchlistRow | undefined;
-
-				if (existingItem) {
-					watchlistId = existingItem.id;
-					if (existingItem.isDeleted === 1) {
-						db.prepare(`
-							UPDATE watchlist SET isDeleted = 0, stockName = ?, sortOrder = ?, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW') WHERE id = ?
-						`).run(args.stockName, nextOrder, watchlistId);
-					} else {
-						db.prepare(`
-							UPDATE watchlist SET stockName = ?, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW') WHERE id = ?
-						`).run(args.stockName, watchlistId);
-					}
-				} else {
-					watchlistId = randomUUID();
-					db.prepare(`
-						INSERT INTO watchlist (id, userId, stockCode, stockName, exchange, market, sortOrder)
-						VALUES (?, ?, ?, ?, ?, ?, ?)
-					`).run(watchlistId, uId, args.stockCode, args.stockName, args.exchange, args.market, nextOrder);
+			return enqueueWatchlistMutation(async () => {
+				const uId = String(ctx.userId);
+				if (!ctx.runtime) {
+					return JSON.stringify({ success: false, error: "无法分析行业/主题关系：runtime 不可用" });
+				}
+				const db = getDB();
+				const stock = normalizeWatchlistStock(args);
+				const existingBeforeClassify = db.prepare("SELECT id, isDeleted FROM watchlist WHERE userId = ? AND stockCode = ? AND exchange = ?")
+					.get(uId, stock.stockCode, stock.exchange) as WatchlistRow | undefined;
+				if (existingBeforeClassify?.isDeleted === 0) {
+					return JSON.stringify({ success: true, skipped: true, reason: "duplicate", id: existingBeforeClassify.id });
 				}
 
-				if (!args.industry && !args.theme && ctx.runtime) {
-					watchlistLogic.getStockClassification(ctx.runtime, args.stockName, args.stockCode, args.exchange, uId)
-						.then(classification => {
-							if (classification) {
-								const db2 = getDB();
-								updateWatchlistTags(db2, watchlistId, uId, classification.industry, classification.theme);
-							}
-						}).catch(err => console.error("[Watchlist] 自动分类失败:", err));
-				} else {
-					updateWatchlistTags(db, watchlistId, uId, args.industry, args.theme);
+				let classification: Awaited<ReturnType<typeof watchlistLogic.getStockClassification>>;
+				try {
+					classification = await watchlistLogic.getStockClassification(ctx.runtime, stock.stockName, stock.stockCode, stock.exchange, uId);
+				} catch (e: any) {
+					return JSON.stringify({ success: false, error: e.message });
 				}
-				db.exec("COMMIT");
-				return JSON.stringify({ success: true, id: watchlistId });
-			} catch (e: any) {
-				db.exec("ROLLBACK");
-				return JSON.stringify({ success: false, error: e.message });
-			}
-		}
-	},
+				if (!classification) {
+					return JSON.stringify({ success: false, error: "行业/主题关系分析失败" });
+				}
 
-	batch_add_to_watchlist: {
-		name: "batch_add_to_watchlist",
-		description: "批量添加股票到自选列表",
-		parameters: z.object({ stocks: z.array(AddToWatchlistParamsSchema) }),
-		execute: async (args: { stocks: AddToWatchlistParams[] }, ctx: { userId: string, runtime?: PluginRuntime }) => {
-			const db = getDB();
-			const uId = String(ctx.userId);
-			db.exec("BEGIN TRANSACTION");
-			try {
-				const results: string[] = [];
-				const sortRow = db.prepare("SELECT MAX(sortOrder) as max FROM watchlist WHERE userId=? AND isDeleted=0").get(uId) as { max: number } | undefined;
-				let currentMaxOrder = sortRow?.max ?? 0;
-
-				for (const stock of args.stocks) {
-					const nextOrder = currentMaxOrder + 1024;
-					currentMaxOrder = nextOrder;
+				if (db.inTransaction) db.exec("ROLLBACK");
+				db.exec("BEGIN TRANSACTION");
+				try {
+					const sortRow = db.prepare("SELECT MAX(sortOrder) as max FROM watchlist WHERE userId=? AND isDeleted=0").get(uId) as { max: number } | undefined;
+					const nextOrder = (sortRow?.max ?? 0) + 1024;
 
 					let watchlistId: string;
 					const existingItem = db.prepare("SELECT id, isDeleted FROM watchlist WHERE userId = ? AND stockCode = ? AND exchange = ?").get(uId, stock.stockCode, stock.exchange) as WatchlistRow | undefined;
@@ -145,9 +174,8 @@ export const watchlistTools = {
 								UPDATE watchlist SET isDeleted = 0, stockName = ?, sortOrder = ?, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW') WHERE id = ?
 							`).run(stock.stockName, nextOrder, watchlistId);
 						} else {
-							db.prepare(`
-								UPDATE watchlist SET stockName = ?, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW') WHERE id = ?
-							`).run(stock.stockName, watchlistId);
+							db.exec("ROLLBACK");
+							return JSON.stringify({ success: true, skipped: true, reason: "duplicate", id: watchlistId });
 						}
 					} else {
 						watchlistId = randomUUID();
@@ -156,34 +184,145 @@ export const watchlistTools = {
 							VALUES (?, ?, ?, ?, ?, ?, ?)
 						`).run(watchlistId, uId, stock.stockCode, stock.stockName, stock.exchange, stock.market, nextOrder);
 					}
-					results.push(watchlistId);
+
+					upsertStockClassificationCache(db, stock, classification);
+					updateWatchlistTags(db, watchlistId, uId, classification.industry, classification.theme);
+					db.exec("COMMIT");
+					return JSON.stringify({ success: true, id: watchlistId });
+				} catch (e: any) {
+					if (db.inTransaction) db.exec("ROLLBACK");
+					return JSON.stringify({ success: false, error: e.message });
+				}
+			});
+		}
+	},
+
+	batch_add_to_watchlist: {
+		name: "batch_add_to_watchlist",
+		description: "批量添加股票到自选列表。添加多只股票时必须使用这个工具，不要循环调用 add_to_watchlist。",
+		parameters: z.object({ stocks: z.array(AddToWatchlistParamsSchema) }),
+		execute: async (args: { stocks: AddToWatchlistParams[] }, ctx: { userId: string, runtime?: PluginRuntime }) => {
+			return enqueueWatchlistMutation(async () => {
+				if (!Array.isArray(args.stocks) || args.stocks.length === 0) {
+					return JSON.stringify({ success: false, error: "批量添加失败：stocks 不能为空" });
+				}
+				if (!ctx.runtime) {
+					return JSON.stringify({ success: false, error: "无法分析行业/主题关系：runtime 不可用" });
 				}
 
-				if (ctx.runtime && args.stocks.length > 0) {
-					if (!args.stocks[0].industry && !args.stocks[0].theme) {
-						watchlistLogic.getBatchStockClassification(ctx.runtime, args.stocks, uId)
-							.then(batchResults => {
-								const db2 = getDB();
-								batchResults.forEach((res, i) => {
-									if (res) {
-										updateWatchlistTags(db2, results[i], uId, res.industry, res.theme);
-									}
-								});
-							}).catch(err => console.error("[Watchlist] 批量自动分类失败:", err));
+				const db = getDB();
+				const uId = String(ctx.userId);
+				const uniqueStocks: AddToWatchlistParams[] = [];
+				const inputSeen = new Set<string>();
+				const skipped: { stockCode: string; exchange: string; reason: "input_duplicate" | "duplicate"; id?: string }[] = [];
+				for (const rawStock of args.stocks) {
+					const stock = normalizeWatchlistStock(rawStock);
+					const key = watchlistStockKey(stock);
+					if (inputSeen.has(key)) {
+						skipped.push({ stockCode: stock.stockCode, exchange: stock.exchange, reason: "input_duplicate" });
+						continue;
+					}
+					inputSeen.add(key);
+					uniqueStocks.push(stock);
+				}
+				const stocksToAdd: AddToWatchlistParams[] = [];
+				for (const stock of uniqueStocks) {
+					const existing = db.prepare("SELECT id, isDeleted FROM watchlist WHERE userId = ? AND stockCode = ? AND exchange = ?")
+						.get(uId, stock.stockCode, stock.exchange) as WatchlistRow | undefined;
+					if (existing?.isDeleted === 0) {
+						skipped.push({ stockCode: stock.stockCode, exchange: stock.exchange, reason: "duplicate", id: existing.id });
 					} else {
-						const db2 = getDB();
-						args.stocks.forEach((s, i) => {
-							updateWatchlistTags(db2, results[i], uId, s.industry, s.theme);
-						});
+						stocksToAdd.push(stock);
 					}
 				}
+				logger.info({
+					count: args.stocks?.length ?? 0,
+					addCount: stocksToAdd.length,
+					skippedCount: skipped.length,
+					codes: args.stocks?.map(stock => stock.stockCode)
+				}, "[Watchlist] batch_add_to_watchlist received");
+				if (stocksToAdd.length === 0) {
+					return JSON.stringify({ success: true, ids: [], skipped });
+				}
 
-				db.exec("COMMIT");
-				return JSON.stringify({ success: true, ids: results });
-			} catch (e: any) {
-				db.exec("ROLLBACK");
-				return JSON.stringify({ success: false, error: e.message });
-			}
+				let batchResults: Awaited<ReturnType<typeof watchlistLogic.classifyStocksTogether>>;
+				try {
+					batchResults = await watchlistLogic.classifyStocksTogether(ctx.runtime, stocksToAdd, uId);
+				} catch (e: any) {
+					logger.warn({
+						count: stocksToAdd.length,
+						codes: stocksToAdd.map(stock => stock.stockCode),
+						error: e.message || String(e)
+					}, "[Watchlist] batch_add_to_watchlist classification failed");
+					return JSON.stringify({
+						success: false,
+						failedStage: "classification",
+						error: e.message || "批量添加失败：行业/主题关系分析失败"
+					});
+				}
+
+				if (db.inTransaction) db.exec("ROLLBACK");
+				db.exec("BEGIN TRANSACTION");
+				try {
+					const results: string[] = [];
+					const writtenItems: { id: string; stock: AddToWatchlistParams; classification: typeof batchResults[number] }[] = [];
+					const sortRow = db.prepare("SELECT MAX(sortOrder) as max FROM watchlist WHERE userId=? AND isDeleted=0").get(uId) as { max: number } | undefined;
+					let currentMaxOrder = sortRow?.max ?? 0;
+
+					stocksToAdd.forEach((stock, i) => {
+						const nextOrder = currentMaxOrder + 1024;
+						currentMaxOrder = nextOrder;
+						const classification = batchResults[i];
+						if (!classification) {
+							throw new Error(`行业/主题关系分析失败: ${stock.stockName}`);
+						}
+
+						let watchlistId: string;
+						const existingItem = db.prepare("SELECT id, isDeleted FROM watchlist WHERE userId = ? AND stockCode = ? AND exchange = ?").get(uId, stock.stockCode, stock.exchange) as WatchlistRow | undefined;
+
+						if (existingItem) {
+							watchlistId = existingItem.id;
+							if (existingItem.isDeleted === 1) {
+								db.prepare(`
+									UPDATE watchlist SET isDeleted = 0, stockName = ?, sortOrder = ?, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW') WHERE id = ?
+								`).run(stock.stockName, nextOrder, watchlistId);
+							} else {
+								skipped.push({ stockCode: stock.stockCode, exchange: stock.exchange, reason: "duplicate", id: watchlistId });
+								return;
+							}
+						} else {
+							watchlistId = randomUUID();
+							db.prepare(`
+								INSERT INTO watchlist (id, userId, stockCode, stockName, exchange, market, sortOrder)
+								VALUES (?, ?, ?, ?, ?, ?, ?)
+							`).run(watchlistId, uId, stock.stockCode, stock.stockName, stock.exchange, stock.market, nextOrder);
+						}
+						results.push(watchlistId);
+						writtenItems.push({ id: watchlistId, stock, classification });
+					});
+
+					if (writtenItems.length > 0) {
+						writtenItems.forEach(({ id, stock, classification }) => {
+							upsertStockClassificationCache(db, stock, classification);
+							updateWatchlistTags(db, id, uId, classification.industry, classification.theme);
+						});
+					}
+
+					if (results.length !== stocksToAdd.length) {
+						logger.info({
+							input: args.stocks.length,
+							addRequested: stocksToAdd.length,
+							written: results.length,
+							skipped: skipped.length
+						}, "[Watchlist] batch_add_to_watchlist skipped duplicates");
+					}
+					db.exec("COMMIT");
+					return JSON.stringify({ success: true, ids: results, skipped });
+				} catch (e: any) {
+					if (db.inTransaction) db.exec("ROLLBACK");
+					return JSON.stringify({ success: false, error: e.message });
+				}
+			});
 		}
 	},
 
@@ -431,9 +570,9 @@ export const watchlistTools = {
 			try {
 				db.prepare("DELETE FROM watchlist_industry_items WHERE userId = ?").run(uId);
 				db.prepare("DELETE FROM watchlist_theme_items WHERE userId = ?").run(uId);
-				const stocks = db.prepare("SELECT stockName, stockCode, exchange FROM watchlist WHERE userId = ? AND isDeleted = 0").all(uId) as any[];
+				const stocks = db.prepare("SELECT stockName, stockCode, exchange, market FROM watchlist WHERE userId = ? AND isDeleted = 0").all(uId) as any[];
 				if (stocks.length > 0) {
-					watchlistLogic.getBatchStockClassification(ctx.runtime, stocks, uId)
+					watchlistLogic.getBatchStockClassification(ctx.runtime, stocks, uId, { forceRefresh: true })
 						.then(batchResults => {
 							const db2 = getDB();
 							const userStocks = db2.prepare("SELECT id, stockCode, exchange FROM watchlist WHERE userId = ? AND isDeleted = 0").all(uId) as any[];
@@ -442,8 +581,14 @@ export const watchlistTools = {
 									const s = stocks[i];
 									const match = userStocks.find(us => us.stockCode === s.stockCode && us.exchange === s.exchange);
 									if (match) {
+										upsertStockClassificationCache(db2, {
+											stockName: s.stockName,
+											stockCode: s.stockCode,
+											exchange: s.exchange,
+											market: s.market
+										}, res);
 										const cats = [
-											{ name: res.industry.name, type: 'industry' as const, weight: res.industry.weight },
+											...(res.industry ? [{ name: res.industry.name, type: 'industry' as const, weight: res.industry.weight }] : []),
 											...res.theme.map((t: any) => ({ name: t.name, type: 'theme' as const, weight: t.weight }))
 										];
 										cats.forEach(c => {

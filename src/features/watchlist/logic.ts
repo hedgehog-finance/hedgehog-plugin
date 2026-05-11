@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
-import path from "node:path";
+import { completeSimple } from "@mariozechner/pi-ai";
 import { PluginRuntime } from "openclaw/plugin-sdk";
+import {
+	extractAssistantText,
+	prepareSimpleCompletionModel
+} from "openclaw/plugin-sdk/simple-completion-runtime";
 import { getDB } from "../../core/database";
+import { logger } from "../../core/logger";
 import { StockClassification, StockClassificationSchema } from "../../types";
 
 interface GlobalStockMetadataRow {
@@ -11,10 +16,190 @@ interface GlobalStockMetadataRow {
 	lastUpdated: string;
 }
 
+const MAIN_AGENT_ID = "hedgehog-finance";
+const SINGLE_CLASSIFICATION_TIMEOUT_MS = 180000;
+const SMART_SORT_TIMEOUT_MS = 180000;
+const BATCH_CLASSIFICATION_BASE_TIMEOUT_MS = 300000;
+const BATCH_CLASSIFICATION_PER_STOCK_TIMEOUT_MS = 30000;
+const BATCH_CLASSIFICATION_MAX_TIMEOUT_MS = 600000;
+const CLASSIFIER_OUTPUT_BASE_TOKENS = 1000;
+const CLASSIFIER_OUTPUT_PER_STOCK_TOKENS = 260;
+const CLASSIFIER_OUTPUT_MAX_TOKENS = 4096;
+const CLASSIFIER_SYSTEM_PROMPT = [
+	"你是一个股票行业/主题分类器，只能完成当前 JSON 分类任务。",
+	"禁止检查、加载、调用或提及任何技能、工具、外部数据源或工作区文件。",
+	"禁止输出推理过程、解释、Markdown 或代码块。",
+	"只允许根据用户消息中提供的行业/主题分类字典和股票列表输出纯 JSON 数组。"
+].join("\n");
+
+function nowMs(): number {
+	return Date.now();
+}
+
+function resolveModelRef(modelConfig: unknown): string | undefined {
+	if (typeof modelConfig === "string" && modelConfig.trim()) return modelConfig.trim();
+	if (!modelConfig || typeof modelConfig !== "object" || Array.isArray(modelConfig)) return undefined;
+	const primary = (modelConfig as { primary?: unknown }).primary;
+	return typeof primary === "string" && primary.trim() ? primary.trim() : undefined;
+}
+
+function getConfiguredProviderConfig(cfg: any, provider: string): any | undefined {
+	const providerConfigs = cfg.models?.providers;
+	if (!providerConfigs) return undefined;
+	const exact = providerConfigs[provider];
+	if (exact) return exact;
+	const normalized = provider.trim().toLowerCase();
+	return Object.entries(providerConfigs).find(([key]) => key.trim().toLowerCase() === normalized)?.[1];
+}
+
+function resolveClassifierModelSelection(
+	cfg: any,
+	defaultProvider: string,
+	defaultModel: string
+): { provider: string; model: string } {
+	const agentEntry = ((cfg.agents?.list || []) as any[]).find((agent) => agent?.id === MAIN_AGENT_ID);
+	const primary = resolveModelRef(agentEntry?.model)
+		|| resolveModelRef(cfg.agents?.defaults?.model)
+		|| `${defaultProvider}/${defaultModel}`;
+	const slash = primary.indexOf("/");
+	if (slash > 0) {
+		return {
+			provider: primary.slice(0, slash),
+			model: primary.slice(slash + 1)
+		};
+	}
+	return {
+		provider: defaultProvider,
+		model: primary
+	};
+}
+
+function normalizeStockCodeForCache(stockCode: string, exchange?: string): string {
+	const code = String(stockCode || "")
+		.trim()
+		.toUpperCase();
+	if (/\.(SH|SS|SZ|HK|US)$/i.test(code)) {
+		return code.replace(/\.SS$/i, ".SH");
+	}
+	switch (exchange) {
+		case "SSE":
+			return `${code}.SH`;
+		case "SZSE":
+			return `${code}.SZ`;
+		case "HKEX":
+			return `${code}.HK`;
+		default:
+			return code;
+	}
+}
+
+function legacyStockCodeWithoutSuffix(stockCode: string): string {
+	return String(stockCode || "")
+		.trim()
+		.toUpperCase()
+		.replace(/\.(SH|SS|SZ|HK|US)$/i, "");
+}
+
+function getCachedClassificationRow(db: any, stockCode: string, exchange: string): GlobalStockMetadataRow | undefined {
+	const cacheCode = normalizeStockCodeForCache(stockCode, exchange);
+	const legacyCode = legacyStockCodeWithoutSuffix(stockCode);
+	const stmt = db.prepare(`
+		SELECT industryJson, themeJson FROM global_stock_metadata
+		WHERE stockCode = ? AND exchange = ?
+	`);
+	return (stmt.get(cacheCode, exchange) || (legacyCode !== cacheCode ? stmt.get(legacyCode, exchange) : undefined)) as GlobalStockMetadataRow | undefined;
+}
+
+function resolveBatchClassificationTimeoutMs(stockCount: number): number {
+	return Math.min(
+		BATCH_CLASSIFICATION_MAX_TIMEOUT_MS,
+		BATCH_CLASSIFICATION_BASE_TIMEOUT_MS + Math.max(0, stockCount - 1) * BATCH_CLASSIFICATION_PER_STOCK_TIMEOUT_MS
+	);
+}
+
+function estimateClassifierStockCount(prompt: string): number {
+	const codeMatches = prompt.match(/\b\d{6}\.(?:SH|SS|SZ|HK|US)\b/gi);
+	return Math.max(1, codeMatches?.length ?? 1);
+}
+
+function resolveClassifierOutputMaxTokens(prompt: string): number {
+	return Math.min(
+		CLASSIFIER_OUTPUT_MAX_TOKENS,
+		CLASSIFIER_OUTPUT_BASE_TOKENS + estimateClassifierStockCount(prompt) * CLASSIFIER_OUTPUT_PER_STOCK_TOKENS
+	);
+}
+
+function normalizeCategoryMatchKey(value: string): string {
+	return String(value || "")
+		.trim()
+		.toLowerCase()
+		.replace(/[\s\u00a0\u3000_\-—–·・,，、/／|｜]+/g, "");
+}
+
+function disableClassifierReasoningPayload(payload: unknown, model: unknown): unknown {
+	if (!payload || typeof payload !== "object" || Array.isArray(payload)) return payload;
+	const next = { ...(payload as Record<string, unknown>) };
+	delete next.reasoning_effort;
+	delete next.reasoningEffort;
+	if (next.reasoning && typeof next.reasoning === "object" && !Array.isArray(next.reasoning)) {
+		next.reasoning = { ...(next.reasoning as Record<string, unknown>), effort: "none" };
+	} else {
+		delete next.reasoning;
+	}
+
+	const modelInfo = (model && typeof model === "object" ? model : {}) as Record<string, unknown>;
+	const provider = String(modelInfo.provider || "").toLowerCase();
+	const baseUrl = String(modelInfo.baseUrl || "").toLowerCase();
+	const compat = modelInfo.compat && typeof modelInfo.compat === "object"
+		? modelInfo.compat as Record<string, unknown>
+		: {};
+	const thinkingFormat = String(compat.thinkingFormat || "").toLowerCase();
+	const usesBooleanThinkingToggle =
+		thinkingFormat === "qwen"
+		|| thinkingFormat === "qwen-chat-template"
+		|| thinkingFormat === "zai"
+		|| provider === "qwen"
+		|| provider === "modelstudio"
+		|| provider === "zai"
+		|| baseUrl.includes("dashscope.aliyuncs.com")
+		|| baseUrl.includes("api.z.ai")
+		|| "enable_thinking" in next
+		|| "chat_template_kwargs" in next;
+
+	if (usesBooleanThinkingToggle) {
+		next.enable_thinking = false;
+		next.chat_template_kwargs = {
+			...(next.chat_template_kwargs && typeof next.chat_template_kwargs === "object" && !Array.isArray(next.chat_template_kwargs)
+				? next.chat_template_kwargs as Record<string, unknown>
+				: {}),
+			enable_thinking: false
+		};
+	}
+	return next;
+}
+
+function extractJsonArray(text: string): unknown[] {
+	const trimmed = text.trim();
+	const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+	const source = fenced?.[1]?.trim() || trimmed;
+	const start = source.indexOf("[");
+	const end = source.lastIndexOf("]");
+	if (start < 0 || end < start) {
+		throw new Error("AI 未返回有效分类 JSON");
+	}
+	const parsed = JSON.parse(source.slice(start, end + 1));
+	if (!Array.isArray(parsed)) {
+		throw new Error("AI 分类结果不是数组");
+	}
+	return parsed;
+}
+
 /**
  * 智能分类元数据引擎
  */
 export const watchlistLogic = {
+	_normalizeStockCodeForCache: normalizeStockCodeForCache,
+
 	/**
 	 * 获取单只股票的分类与权重（带全局缓存）
 	 */
@@ -28,18 +213,20 @@ export const watchlistLogic = {
 		const db = getDB();
 
 		// 1. 尝试从全局缓存读取
-		const cached = db.prepare(`
-			SELECT industryJson, themeJson FROM global_stock_metadata 
-			WHERE stockCode = ? AND exchange = ?
-		`).get(stockCode, exchange) as GlobalStockMetadataRow | undefined;
+		const cached = getCachedClassificationRow(db, stockCode, exchange);
 
 		if (cached && cached.industryJson) {
 			try {
-				return {
+				logger.info({
+					stockCode,
+					cacheCode: normalizeStockCodeForCache(stockCode, exchange),
+					exchange
+				}, "[Watchlist] classification cache hit");
+				return watchlistLogic._normalizeCachedClassification({
 					industry: JSON.parse(cached.industryJson),
 					theme: JSON.parse(cached.themeJson || '[]'),
 					weight: 50
-				};
+				});
 			} catch (e) {
 				// 容错
 			}
@@ -48,45 +235,138 @@ export const watchlistLogic = {
 		// 2. 缓存未命中，调用 AI 进行推断
 		const classification = await watchlistLogic._autoClassifyWithAI(rt, stockName, stockCode, exchange);
 
-		if (classification) {
-			// 3. 结果存入全局缓存
-			db.prepare(`
-				INSERT OR REPLACE INTO global_stock_metadata (stockCode, exchange, stockName, industryJson, themeJson)
-				VALUES (?, ?, ?, ?, ?)
-			`).run(
-				stockCode,
-				exchange,
-				stockName,
-				JSON.stringify(classification.industry),
-				JSON.stringify(classification.theme)
-			);
-			return classification;
-		}
-
-		return null;
+		return classification;
 	},
 
 	/**
 	 * 批量获取股票分类
 	 */
-	async getBatchStockClassification(
+	async classifyStocksTogether(
 		rt: PluginRuntime,
 		stocks: any[],
 		_userId: string
+	): Promise<StockClassification[]> {
+		const db = getDB();
+		const results = new Array<StockClassification | null>(stocks.length).fill(null);
+		const pendingStocks: { idx: number, stockName: string, stockCode: string, exchange: string }[] = [];
+
+		stocks.forEach((stock, idx) => {
+			const cached = getCachedClassificationRow(db, stock.stockCode, stock.exchange);
+
+			if (cached && cached.industryJson) {
+				try {
+					logger.info({
+						stockCode: stock.stockCode,
+						cacheCode: normalizeStockCodeForCache(stock.stockCode, stock.exchange),
+						exchange: stock.exchange
+					}, "[Watchlist] classification cache hit");
+					results[idx] = watchlistLogic._normalizeCachedClassification({
+						industry: JSON.parse(cached.industryJson),
+						theme: JSON.parse(cached.themeJson || '[]'),
+						weight: 50
+					});
+					return;
+				} catch {
+					// 缓存损坏时重新分析
+				}
+			}
+
+			pendingStocks.push({
+				idx,
+				stockName: stock.stockName,
+				stockCode: stock.stockCode,
+				exchange: stock.exchange
+			});
+		});
+
+		logger.info({
+			total: stocks.length,
+			cached: stocks.length - pendingStocks.length,
+			pending: pendingStocks.length,
+			pendingCodes: pendingStocks.map(stock => stock.stockCode)
+		}, "[Watchlist] batch add classification input");
+
+		if (pendingStocks.length === 0) {
+			return results as StockClassification[];
+		}
+
+		const cats = watchlistLogic._getKnownCategories(db);
+		if (cats.industries.length === 0) {
+			throw new Error("行业分类字典为空，无法分析行业/主题关系");
+		}
+
+		const stocksList = pendingStocks.map(s => `- ${s.stockName} (${s.stockCode})`).join("\n");
+		const prompt = watchlistLogic._buildAiPrompt(cats.industries, cats.themes, stocksList, true);
+		const sessionId = `classify-batch-${randomUUID()}`;
+		const aiText = await watchlistLogic._callClassifierAi(rt, sessionId, prompt, resolveBatchClassificationTimeoutMs(pendingStocks.length));
+		let parsed: unknown[];
+		try {
+			parsed = extractJsonArray(aiText);
+		} catch (e) {
+			logger.warn({
+				err: e instanceof Error ? e.message : String(e),
+				pendingCodes: pendingStocks.map(stock => stock.stockCode),
+				aiTextLength: aiText.length,
+				aiText
+			}, "[Watchlist] batch classification AI parse failed");
+			throw e;
+		}
+
+		const parsedByCode = new Map<string, any>();
+		parsed.forEach((raw: any) => {
+			if (raw?.code) parsedByCode.set(String(raw.code), raw);
+		});
+
+		let parsedResults: { stock: typeof pendingStocks[number]; data: StockClassification }[];
+		try {
+			parsedResults = pendingStocks.map((stock, i) => {
+				const raw = parsedByCode.get(String(stock.stockCode)) || parsed[i];
+				return {
+					stock,
+					data: watchlistLogic._parseClassification(raw, cats, stock.stockName || stock.stockCode)
+				};
+			});
+		} catch (e) {
+			logger.warn({
+				err: e instanceof Error ? e.message : String(e),
+				pendingCodes: pendingStocks.map(stock => stock.stockCode),
+				aiTextLength: aiText.length,
+				aiText
+			}, "[Watchlist] batch classification AI semantic parse failed");
+			throw e;
+		}
+
+		for (const { stock, data } of parsedResults) {
+			results[stock.idx] = data;
+		}
+
+		const missing = stocks.find((_, i) => !results[i]);
+		if (missing) {
+			throw new Error(`行业/主题关系分析失败: ${missing.stockName || missing.stockCode}`);
+		}
+		return results as StockClassification[];
+	},
+
+	async getBatchStockClassification(
+		rt: PluginRuntime,
+		stocks: any[],
+		_userId: string,
+		options: { requireComplete?: boolean; forceRefresh?: boolean } = {}
 	): Promise<(StockClassification | null)[]> {
 		const db = getDB();
 		const results = new Array(stocks.length).fill(null);
 		const pendingStocks: { idx: number, name: string, code: string, exchange: string }[] = [];
-
 		stocks.forEach((s, i) => {
-			const cached = db.prepare(`SELECT industryJson, themeJson FROM global_stock_metadata WHERE stockCode = ? AND exchange = ?`).get(s.stockCode, s.exchange) as GlobalStockMetadataRow | undefined;
+			const cached = options.forceRefresh
+				? undefined
+				: getCachedClassificationRow(db, s.stockCode, s.exchange);
 			if (cached && cached.industryJson) {
 				try {
-					results[i] = {
+					results[i] = watchlistLogic._normalizeCachedClassification({
 						industry: JSON.parse(cached.industryJson),
 						theme: JSON.parse(cached.themeJson || '[]'),
 						weight: 50
-					};
+					});
 				} catch (e) {
 					pendingStocks.push({ idx: i, name: s.stockName, code: s.stockCode, exchange: s.exchange });
 				}
@@ -94,55 +374,52 @@ export const watchlistLogic = {
 				pendingStocks.push({ idx: i, name: s.stockName, code: s.stockCode, exchange: s.exchange });
 			}
 		});
+		logger.info({
+			total: stocks.length,
+			cached: stocks.length - pendingStocks.length,
+			pending: pendingStocks.length,
+			pendingCodes: pendingStocks.map(s => s.code)
+		}, "[Watchlist] batch classification input");
 
 		if (pendingStocks.length > 0) {
-			const CHUNK_SIZE = 5;
-			const chunks: (typeof pendingStocks)[] = [];
-			for (let i = 0; i < pendingStocks.length; i += CHUNK_SIZE) {
-				chunks.push(pendingStocks.slice(i, i + CHUNK_SIZE));
-			}
-
 			const cats = watchlistLogic._getKnownCategories(db);
 			if (cats.industries.length === 0) return results;
 
-			await Promise.all(chunks.map(async (chunk) => {
-				const stocksList = chunk.map(s => `- ${s.name} (${s.code})`).join("\n");
-				const prompt = watchlistLogic._buildAiPrompt(cats.industries, cats.themes, stocksList, true);
+			const stocksList = pendingStocks.map(s => `- ${s.name} (${s.code})`).join("\n");
+			const prompt = watchlistLogic._buildAiPrompt(cats.industries, cats.themes, stocksList, true);
 
-				try {
-					const aiText = await watchlistLogic._callEmbeddedAi(rt, `classify-batch-${chunk[0].code}`, prompt, 120000);
-					const jsonMatch = aiText.match(/\[.*\]/s);
-					if (jsonMatch) {
-						const parsed = JSON.parse(jsonMatch[0]);
-						chunk.forEach((ps, i) => {
-							const raw = parsed[i];
-							if (raw && Array.isArray(raw.category)) {
-								const industryItem = raw.category.find((c: any) => cats.industries.includes(watchlistLogic._anchorToCategory(c.name, cats.industries)));
-								const themesItems = raw.category.filter((c: any) => c !== industryItem);
+			try {
+				const aiText = await watchlistLogic._callClassifierAi(rt, `classify-batch-${randomUUID()}`, prompt, resolveBatchClassificationTimeoutMs(pendingStocks.length));
+				const parsed = extractJsonArray(aiText);
+				const parsedByCode = new Map<string, any>();
+				parsed.forEach((raw: any) => {
+					if (raw?.code) parsedByCode.set(String(raw.code), raw);
+				});
 
-								if (industryItem) {
-									const data: StockClassification = {
-										industry: {
-											name: watchlistLogic._anchorToCategory(industryItem.name, cats.industries),
-											weight: industryItem.weight || 100
-										},
-										theme: themesItems.map((t: any) => ({
-											name: watchlistLogic._anchorToCategory(t.name, cats.themes),
-											weight: t.weight || 0
-										})),
-										weight: 50
-									};
-									results[ps.idx] = data;
-									db.prepare(`INSERT OR REPLACE INTO global_stock_metadata (stockCode, exchange, stockName, industryJson, themeJson) VALUES (?, ?, ?, ?, ?)`)
-										.run(ps.code, ps.exchange, ps.name, JSON.stringify(data.industry), JSON.stringify(data.theme));
-								}
-							}
-						});
-					}
-				} catch (e) {
-					console.error(`[Watchlist] 分块 AI 分类失败:`, e);
+				const parsedResults = pendingStocks.map((ps, i) => {
+					const raw = parsedByCode.get(String(ps.code)) || parsed[i];
+					return {
+						stock: ps,
+						data: watchlistLogic._parseClassification(raw, cats, ps.name || ps.code)
+					};
+				});
+
+				for (const { stock, data } of parsedResults) {
+					results[stock.idx] = data;
 				}
-			}));
+			} catch (e) {
+				logger.error({
+					err: e instanceof Error ? e.message : String(e),
+					pendingCodes: pendingStocks.map(stock => stock.code)
+				}, "[Watchlist] batch AI classification failed");
+				if (options.requireComplete) throw e;
+			}
+		}
+		if (options.requireComplete) {
+			const missing = stocks.find((_, i) => !results[i]);
+			if (missing) {
+				throw new Error(`行业/主题关系分析失败: ${missing.stockName || missing.stockCode}`);
+			}
 		}
 		return results;
 	},
@@ -168,75 +445,132 @@ export const watchlistLogic = {
 		const db = getDB();
 		const cats = watchlistLogic._getKnownCategories(db);
 
-		if (cats.industries.length === 0 || cats.themes.length === 0) {
+		if (cats.industries.length === 0) {
 			return null;
 		}
 
 		const prompt = watchlistLogic._buildAiPrompt(cats.industries, cats.themes, `${stockName} (${stockCode})`, false);
-		const aiText = await watchlistLogic._callEmbeddedAi(rt, `classify-${stockCode}`, prompt, 60000);
+		const aiText = await watchlistLogic._callClassifierAi(rt, `classify-${stockCode}`, prompt, SINGLE_CLASSIFICATION_TIMEOUT_MS);
 
 		try {
-			const jsonMatch = aiText.match(/\[.*\]/s);
-			if (jsonMatch) {
-				const parsed = JSON.parse(jsonMatch[0]);
-				const raw = parsed[0]; // 单只股票也是数组格式
-
-				if (raw && Array.isArray(raw.category)) {
-					const industryItem = raw.category.find((c: any) => cats.industries.includes(watchlistLogic._anchorToCategory(c.name, cats.industries)));
-					const themesItems = raw.category.filter((c: any) => c !== industryItem);
-
-					if (industryItem) {
-						const data: StockClassification = {
-							industry: {
-								name: watchlistLogic._anchorToCategory(industryItem.name, cats.industries),
-								weight: industryItem.weight || 100
-							},
-							theme: themesItems.map((t: any) => ({
-								name: watchlistLogic._anchorToCategory(t.name, cats.themes),
-								weight: t.weight || 0
-							})),
-							weight: 50
-						};
-						return data;
-					}
-				}
+			const parsed = extractJsonArray(aiText);
+			const raw = parsed[0]; // 单只股票也是数组格式
+			if (raw) {
+				return watchlistLogic._parseClassification(raw, cats, stockName || stockCode);
 			}
 		} catch (e) {
-			console.error("[Watchlist] AI 分类解析异常:", e);
+			logger.warn({ err: e instanceof Error ? e.message : String(e), stockCode, stockName }, "[Watchlist] AI 分类解析异常");
 		}
 		return null;
 	},
 
-	async _callEmbeddedAi(rt: PluginRuntime, sessionId: string, prompt: string, timeoutMs: number): Promise<string> {
-		const fullCfg = rt.config.loadConfig();
-		const workspaceDir = rt.agent.resolveAgentWorkspaceDir(fullCfg, "hedgehog-workspace");
-		const sessionFile = path.join(workspaceDir, "data", "sessions", `${sessionId}.json`);
-		let provider: string | undefined;
-		let model: string | undefined;
-		const resolveModelRef = (agentId: string): string | null => {
-			const agent = fullCfg.agents?.list?.find(a => a.id === agentId);
-			const modelCfg = agent?.model || fullCfg.agents?.defaults?.model;
-			if (!modelCfg) return null;
-			if (typeof modelCfg === 'string') return modelCfg;
-			return (modelCfg as { primary?: string }).primary || null;
-		};
-		const modelRef = resolveModelRef("hedgehog-workspace") || resolveModelRef(fullCfg.agents?.list?.[0]?.id || "");
-		if (modelRef) {
-			const parts = modelRef.split('/');
-			if (parts.length >= 2) {
-				provider = parts[0];
-				model = parts.slice(1).join('/');
-			}
+	async _callClassifierCompletion(rt: PluginRuntime, sessionId: string, prompt: string, timeoutMs: number): Promise<string> {
+		const cfg = rt.config.loadConfig();
+		const { provider, model } = resolveClassifierModelSelection(cfg, rt.agent.defaults.provider, rt.agent.defaults.model);
+		const maxTokens = resolveClassifierOutputMaxTokens(prompt);
+		const providerAuth = await rt.modelAuth.resolveApiKeyForProvider({ provider, cfg });
+		if (!providerAuth.apiKey) {
+			throw new Error(`No API key found for provider "${provider}".`);
 		}
-		const result = await rt.agent.runEmbeddedAgent({
-			sessionId, runId: randomUUID(), timeoutMs: 30000,
-			provider: provider || String(rt.agent.defaults.provider),
-			model: model || String(rt.agent.defaults.model),
-			workspaceDir, sessionFile, prompt,
-			bootstrapContextMode: "lightweight",
-			extraSystemPrompt: "你是一个金融专家，只输出纯 JSON。请基于公司主营业务进行客观分类，确保相同逻辑下结果唯一。绝对禁止输出任何推理过程。"
+		const providerConfigs = cfg.models?.providers;
+		const providerConfig = getConfiguredProviderConfig(cfg, provider);
+		if (!providerConfig) {
+			throw new Error(`No model provider config found for "${provider}".`);
+		}
+		const embeddedCfg = {
+			...cfg,
+			agents: {
+				...cfg.agents,
+				defaults: {
+					...cfg.agents?.defaults,
+					systemPromptOverride: CLASSIFIER_SYSTEM_PROMPT
+				}
+			},
+			models: {
+				...cfg.models,
+				providers: {
+					...providerConfigs,
+					[provider]: {
+						...providerConfig,
+						auth: "api-key" as const,
+						apiKey: providerAuth.apiKey
+					}
+				}
+			}
+		};
+		const startedAt = nowMs();
+		const prepared = await prepareSimpleCompletionModel({
+			cfg: embeddedCfg,
+			provider,
+			modelId: model
 		});
-		return result.meta.finalAssistantVisibleText || "";
+		const preparedAt = nowMs();
+		if ("error" in prepared) {
+			throw new Error(prepared.error);
+		}
+		const abortController = new AbortController();
+		const abortTimer = setTimeout(() => {
+			abortController.abort(new Error(`classifier completion timed out after ${timeoutMs}ms`));
+		}, timeoutMs);
+		try {
+			logger.info({
+				sessionId,
+				provider,
+				model,
+				maxTokens
+			}, "[Watchlist] classifier simple completion start");
+
+			const result = await completeSimple(prepared.model, {
+				systemPrompt: CLASSIFIER_SYSTEM_PROMPT,
+				messages: [{
+					role: "user",
+					content: prompt,
+					timestamp: Date.now()
+				}]
+			}, {
+				apiKey: prepared.auth.apiKey,
+				maxTokens,
+				signal: abortController.signal,
+				onPayload: disableClassifierReasoningPayload
+			});
+			const completedAt = nowMs();
+			const aiText = extractAssistantText(result)?.trim() || "";
+			if (!aiText) {
+				throw new Error("AI 分类分析未返回内容");
+			}
+			extractJsonArray(aiText);
+			logger.info({
+				sessionId,
+				responseId: result.responseId,
+				usage: result.usage,
+				stopReason: result.stopReason,
+				contentBlocks: Array.isArray(result.content)
+					? result.content.map((block: any) => block?.type || typeof block)
+					: [],
+				timingMs: {
+					prepare: preparedAt - startedAt,
+					complete: completedAt - preparedAt,
+					total: completedAt - startedAt
+				},
+				aiTextLength: aiText.length,
+				aiText
+			}, "[Watchlist] classifier simple completion completed");
+			return aiText;
+		} finally {
+			clearTimeout(abortTimer);
+		}
+	},
+
+	async _callClassifierAi(rt: PluginRuntime, sessionId: string, prompt: string, timeoutMs: number): Promise<string> {
+		try {
+			return await watchlistLogic._callClassifierCompletion(rt, sessionId, prompt, timeoutMs);
+		} catch (e) {
+			logger.warn({
+				err: e instanceof Error ? e.message : String(e),
+				sessionId
+			}, "[Watchlist] classifier simple completion failed");
+			throw e;
+		}
 	},
 
 	_ensureCategory(db: any, name: string, type: 'industry' | 'theme', userId: string): string {
@@ -258,12 +592,45 @@ export const watchlistLogic = {
 
 	async applySmartSort(rt: PluginRuntime, sessionId: string, stocks: { name: string, code: string }[]): Promise<any[]> {
 		const prompt = watchlistLogic._buildSmartSortPrompt(stocks);
-		const aiText = await watchlistLogic._callEmbeddedAi(rt, `smart-sort-${sessionId}`, prompt, 60000);
+		const aiText = await watchlistLogic._callClassifierAi(rt, `smart-sort-${sessionId}`, prompt, SMART_SORT_TIMEOUT_MS);
 		const jsonMatch = aiText.match(/\[.*\]/s);
 		if (jsonMatch) {
 			try { return JSON.parse(jsonMatch[0]); } catch (e) { return []; }
 		}
 		return [];
+	},
+
+	_parseClassification(raw: any, cats: { industries: string[]; themes: string[] }, label: string): StockClassification {
+		if (!raw || !Array.isArray(raw.category)) {
+			throw new Error(`行业/主题关系分析失败: ${label}`);
+		}
+		const industryItem = raw.category.find((c: any) => cats.industries.includes(watchlistLogic._anchorToCategory(c.name, cats.industries)));
+		if (!industryItem) {
+			throw new Error(`行业分类分析失败: ${label}`);
+		}
+		const industryName = watchlistLogic._anchorToCategory(industryItem.name, cats.industries);
+		const themesItems = raw.category.filter((c: any) => c !== industryItem);
+		return {
+			industry: {
+				name: industryName,
+				weight: industryItem.weight || 100
+			},
+			theme: themesItems
+				.map((t: any) => ({
+					name: watchlistLogic._anchorToCategory(t.name, cats.themes),
+					weight: t.weight || 0
+				}))
+				.filter((t: { name: string; weight: number }) => cats.themes.includes(t.name)),
+			weight: 50
+		};
+	},
+
+	_normalizeCachedClassification(value: StockClassification): StockClassification {
+		const parsed = StockClassificationSchema.safeParse(value);
+		if (!parsed.success || !parsed.data.industry?.name) {
+			throw new Error("缓存分类缺少行业");
+		}
+		return parsed.data;
 	},
 
 	_buildAiPrompt(industries: string[], themes: string[], input: string, isBatch: boolean): string {
@@ -290,7 +657,15 @@ export const watchlistLogic = {
 		const trimmed = value.trim();
 		const exact = categories.find(c => c === trimmed);
 		if (exact) return exact;
-		const candidates = categories.filter(c => c.includes(trimmed) || trimmed.includes(c));
+		const normalized = normalizeCategoryMatchKey(trimmed);
+		const normalizedExact = categories.find(c => normalizeCategoryMatchKey(c) === normalized);
+		if (normalizedExact) return normalizedExact;
+		const candidates = categories.filter(c => {
+			const categoryKey = normalizeCategoryMatchKey(c);
+			return c.includes(trimmed)
+				|| trimmed.includes(c)
+				|| (normalized.length > 0 && (categoryKey.includes(normalized) || normalized.includes(categoryKey)));
+		});
 		if (candidates.length === 1) return candidates[0];
 		return "其他";
 	}
