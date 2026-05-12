@@ -11,13 +11,13 @@ import type {
 	ChannelAccountSnapshot,
 	ChannelStatusIssue
 } from "openclaw/plugin-sdk/channel-contract";
-import { getHedgehogRuntime } from "./runtime";
-import { logger } from "./core/logger";
+import { getHedgehogRuntime } from "./runtime.js";
+import { logger } from "./core/logger.js";
 import type {
 	HedgehogFinanceResolvedAccount,
 	RelayInboundMessage
-} from "./types";
-import { allFeaturesTools } from "./features";
+} from "./types.js";
+import { allFeaturesTools } from "./features/index.js";
 
 
 

@@ -1,0 +1,572 @@
+import { randomUUID } from "node:crypto";
+import { z } from "openclaw/plugin-sdk/zod";
+import { getDB } from "../../core/database.js";
+import { logger } from "../../core/logger.js";
+import { watchlistLogic } from "./logic.js";
+import { AddToWatchlistParamsSchema, GetWatchlistParamsSchema, SyncCategoriesParamsSchema, BatchUpdateSortOrdersParamsSchema } from "./schema.js";
+let watchlistMutationQueue = Promise.resolve();
+function enqueueWatchlistMutation(task) {
+    const previous = watchlistMutationQueue;
+    let release;
+    watchlistMutationQueue = new Promise((resolve) => {
+        release = resolve;
+    });
+    return previous
+        .catch(() => undefined)
+        .then(task)
+        .finally(release);
+}
+/**
+ * 辅助函数：统一处理归一化分类项
+ */
+function normalizeTags(input) {
+    if (!input)
+        return [];
+    const items = Array.isArray(input) ? input : [input];
+    return items
+        .filter((item) => typeof item?.name === 'string' && item.name.trim().length > 0)
+        .map(item => ({ name: item.name, weight: item.weight ?? 0 }));
+}
+function normalizeWatchlistStock(stock) {
+    return {
+        ...stock,
+        stockCode: watchlistLogic._normalizeStockCodeForCache(stock.stockCode, stock.exchange)
+    };
+}
+function watchlistStockKey(stock) {
+    return `${watchlistLogic._normalizeStockCodeForCache(stock.stockCode, stock.exchange)}:${stock.exchange}`;
+}
+/**
+ * 辅助函数：更新股票的分类标签
+ */
+function updateWatchlistTags(db, watchlistId, userId, industry, theme) {
+    db.prepare("DELETE FROM watchlist_industry_items WHERE watchlistId = ? AND userId = ?").run(watchlistId, userId);
+    db.prepare("DELETE FROM watchlist_theme_items WHERE watchlistId = ? AND userId = ?").run(watchlistId, userId);
+    const normIndustries = normalizeTags(industry);
+    for (const item of normIndustries) {
+        const categoryId = watchlistLogic._ensureCategory(db, item.name, 'industry', userId);
+        if (categoryId) {
+            db.prepare(`
+				INSERT OR IGNORE INTO watchlist_industry_items (id, watchlistId, userId, categoryId, weight)
+				VALUES (?, ?, ?, ?, ?)
+			`).run(randomUUID(), watchlistId, userId, categoryId, item.weight);
+        }
+    }
+    const normThemes = normalizeTags(theme);
+    for (const item of normThemes) {
+        const categoryId = watchlistLogic._ensureCategory(db, item.name, 'theme', userId);
+        if (categoryId) {
+            db.prepare(`
+				INSERT OR IGNORE INTO watchlist_theme_items (id, watchlistId, userId, categoryId, weight)
+				VALUES (?, ?, ?, ?, ?)
+			`).run(randomUUID(), watchlistId, userId, categoryId, item.weight);
+        }
+    }
+}
+function upsertStockClassificationCache(db, stock, classification) {
+    const cacheCode = watchlistLogic._normalizeStockCodeForCache(stock.stockCode, stock.exchange);
+    const legacyCode = stock.stockCode.trim().toUpperCase().replace(/\.(SH|SS|SZ|HK|US)$/i, "");
+    db.prepare(`
+		INSERT OR REPLACE INTO global_stock_metadata (stockCode, exchange, stockName, industryJson, themeJson)
+		VALUES (?, ?, ?, ?, ?)
+	`).run(cacheCode, stock.exchange, stock.stockName, JSON.stringify(classification.industry), JSON.stringify(classification.theme || []));
+    if (legacyCode && legacyCode !== cacheCode) {
+        db.prepare(`
+			DELETE FROM global_stock_metadata WHERE stockCode = ? AND exchange = ?
+		`).run(legacyCode, stock.exchange);
+    }
+    logger.info({
+        stockCode: stock.stockCode,
+        cacheCode,
+        exchange: stock.exchange,
+        industry: classification.industry.name,
+        themeCount: classification.theme?.length || 0
+    }, "[Watchlist] classification cache upserted");
+}
+export const watchlistTools = {
+    add_to_watchlist: {
+        name: "add_to_watchlist",
+        description: "添加股票到自选列表",
+        parameters: AddToWatchlistParamsSchema,
+        registerTool: false,
+        execute: async (args, ctx) => {
+            return enqueueWatchlistMutation(async () => {
+                const uId = String(ctx.userId);
+                if (!ctx.runtime) {
+                    return JSON.stringify({ success: false, error: "无法分析行业/主题关系：runtime 不可用" });
+                }
+                const db = getDB();
+                const stock = normalizeWatchlistStock(args);
+                const existingBeforeClassify = db.prepare("SELECT id, isDeleted FROM watchlist WHERE userId = ? AND stockCode = ? AND exchange = ?")
+                    .get(uId, stock.stockCode, stock.exchange);
+                if (existingBeforeClassify?.isDeleted === 0) {
+                    return JSON.stringify({ success: true, skipped: true, reason: "duplicate", id: existingBeforeClassify.id });
+                }
+                let classification;
+                try {
+                    classification = await watchlistLogic.getStockClassification(ctx.runtime, stock.stockName, stock.stockCode, stock.exchange, uId);
+                }
+                catch (e) {
+                    return JSON.stringify({ success: false, error: e.message });
+                }
+                if (!classification) {
+                    return JSON.stringify({ success: false, error: "行业/主题关系分析失败" });
+                }
+                if (db.inTransaction)
+                    db.exec("ROLLBACK");
+                db.exec("BEGIN TRANSACTION");
+                try {
+                    const sortRow = db.prepare("SELECT MAX(sortOrder) as max FROM watchlist WHERE userId=? AND isDeleted=0").get(uId);
+                    const nextOrder = (sortRow?.max ?? 0) + 1024;
+                    let watchlistId;
+                    const existingItem = db.prepare("SELECT id, isDeleted FROM watchlist WHERE userId = ? AND stockCode = ? AND exchange = ?").get(uId, stock.stockCode, stock.exchange);
+                    if (existingItem) {
+                        watchlistId = existingItem.id;
+                        if (existingItem.isDeleted === 1) {
+                            db.prepare(`
+								UPDATE watchlist SET isDeleted = 0, stockName = ?, sortOrder = ?, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW') WHERE id = ?
+							`).run(stock.stockName, nextOrder, watchlistId);
+                        }
+                        else {
+                            db.exec("ROLLBACK");
+                            return JSON.stringify({ success: true, skipped: true, reason: "duplicate", id: watchlistId });
+                        }
+                    }
+                    else {
+                        watchlistId = randomUUID();
+                        db.prepare(`
+							INSERT INTO watchlist (id, userId, stockCode, stockName, exchange, market, sortOrder)
+							VALUES (?, ?, ?, ?, ?, ?, ?)
+						`).run(watchlistId, uId, stock.stockCode, stock.stockName, stock.exchange, stock.market, nextOrder);
+                    }
+                    upsertStockClassificationCache(db, stock, classification);
+                    updateWatchlistTags(db, watchlistId, uId, classification.industry, classification.theme);
+                    db.exec("COMMIT");
+                    return JSON.stringify({ success: true, id: watchlistId });
+                }
+                catch (e) {
+                    if (db.inTransaction)
+                        db.exec("ROLLBACK");
+                    return JSON.stringify({ success: false, error: e.message });
+                }
+            });
+        }
+    },
+    batch_add_to_watchlist: {
+        name: "batch_add_to_watchlist",
+        description: "批量添加股票到自选列表。添加多只股票时必须使用这个工具，不要循环调用 add_to_watchlist。",
+        parameters: z.object({ stocks: z.array(AddToWatchlistParamsSchema) }),
+        execute: async (args, ctx) => {
+            return enqueueWatchlistMutation(async () => {
+                if (!Array.isArray(args.stocks) || args.stocks.length === 0) {
+                    return JSON.stringify({ success: false, error: "批量添加失败：stocks 不能为空" });
+                }
+                if (!ctx.runtime) {
+                    return JSON.stringify({ success: false, error: "无法分析行业/主题关系：runtime 不可用" });
+                }
+                const db = getDB();
+                const uId = String(ctx.userId);
+                const uniqueStocks = [];
+                const inputSeen = new Set();
+                const skipped = [];
+                for (const rawStock of args.stocks) {
+                    const stock = normalizeWatchlistStock(rawStock);
+                    const key = watchlistStockKey(stock);
+                    if (inputSeen.has(key)) {
+                        skipped.push({ stockCode: stock.stockCode, exchange: stock.exchange, reason: "input_duplicate" });
+                        continue;
+                    }
+                    inputSeen.add(key);
+                    uniqueStocks.push(stock);
+                }
+                const stocksToAdd = [];
+                for (const stock of uniqueStocks) {
+                    const existing = db.prepare("SELECT id, isDeleted FROM watchlist WHERE userId = ? AND stockCode = ? AND exchange = ?")
+                        .get(uId, stock.stockCode, stock.exchange);
+                    if (existing?.isDeleted === 0) {
+                        skipped.push({ stockCode: stock.stockCode, exchange: stock.exchange, reason: "duplicate", id: existing.id });
+                    }
+                    else {
+                        stocksToAdd.push(stock);
+                    }
+                }
+                logger.info({
+                    count: args.stocks?.length ?? 0,
+                    addCount: stocksToAdd.length,
+                    skippedCount: skipped.length,
+                    codes: args.stocks?.map(stock => stock.stockCode)
+                }, "[Watchlist] batch_add_to_watchlist received");
+                if (stocksToAdd.length === 0) {
+                    return JSON.stringify({ success: true, ids: [], skipped });
+                }
+                let batchResults;
+                try {
+                    batchResults = await watchlistLogic.classifyStocksTogether(ctx.runtime, stocksToAdd, uId);
+                }
+                catch (e) {
+                    logger.warn({
+                        count: stocksToAdd.length,
+                        codes: stocksToAdd.map(stock => stock.stockCode),
+                        error: e.message || String(e)
+                    }, "[Watchlist] batch_add_to_watchlist classification failed");
+                    return JSON.stringify({
+                        success: false,
+                        failedStage: "classification",
+                        error: e.message || "批量添加失败：行业/主题关系分析失败"
+                    });
+                }
+                if (db.inTransaction)
+                    db.exec("ROLLBACK");
+                db.exec("BEGIN TRANSACTION");
+                try {
+                    const results = [];
+                    const writtenItems = [];
+                    const sortRow = db.prepare("SELECT MAX(sortOrder) as max FROM watchlist WHERE userId=? AND isDeleted=0").get(uId);
+                    let currentMaxOrder = sortRow?.max ?? 0;
+                    stocksToAdd.forEach((stock, i) => {
+                        const nextOrder = currentMaxOrder + 1024;
+                        currentMaxOrder = nextOrder;
+                        const classification = batchResults[i];
+                        if (!classification) {
+                            throw new Error(`行业/主题关系分析失败: ${stock.stockName}`);
+                        }
+                        let watchlistId;
+                        const existingItem = db.prepare("SELECT id, isDeleted FROM watchlist WHERE userId = ? AND stockCode = ? AND exchange = ?").get(uId, stock.stockCode, stock.exchange);
+                        if (existingItem) {
+                            watchlistId = existingItem.id;
+                            if (existingItem.isDeleted === 1) {
+                                db.prepare(`
+									UPDATE watchlist SET isDeleted = 0, stockName = ?, sortOrder = ?, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW') WHERE id = ?
+								`).run(stock.stockName, nextOrder, watchlistId);
+                            }
+                            else {
+                                skipped.push({ stockCode: stock.stockCode, exchange: stock.exchange, reason: "duplicate", id: watchlistId });
+                                return;
+                            }
+                        }
+                        else {
+                            watchlistId = randomUUID();
+                            db.prepare(`
+								INSERT INTO watchlist (id, userId, stockCode, stockName, exchange, market, sortOrder)
+								VALUES (?, ?, ?, ?, ?, ?, ?)
+							`).run(watchlistId, uId, stock.stockCode, stock.stockName, stock.exchange, stock.market, nextOrder);
+                        }
+                        results.push(watchlistId);
+                        writtenItems.push({ id: watchlistId, stock, classification });
+                    });
+                    if (writtenItems.length > 0) {
+                        writtenItems.forEach(({ id, stock, classification }) => {
+                            upsertStockClassificationCache(db, stock, classification);
+                            updateWatchlistTags(db, id, uId, classification.industry, classification.theme);
+                        });
+                    }
+                    if (results.length !== stocksToAdd.length) {
+                        logger.info({
+                            input: args.stocks.length,
+                            addRequested: stocksToAdd.length,
+                            written: results.length,
+                            skipped: skipped.length
+                        }, "[Watchlist] batch_add_to_watchlist skipped duplicates");
+                    }
+                    db.exec("COMMIT");
+                    return JSON.stringify({ success: true, ids: results, skipped });
+                }
+                catch (e) {
+                    if (db.inTransaction)
+                        db.exec("ROLLBACK");
+                    return JSON.stringify({ success: false, error: e.message });
+                }
+            });
+        }
+    },
+    get_watchlist: {
+        name: "get_watchlist",
+        description: "获取自选股列表",
+        parameters: GetWatchlistParamsSchema,
+        execute: async (args, ctx) => {
+            try {
+                const db = getDB();
+                const uId = String(ctx.userId);
+                let query;
+                let params = [uId];
+                if (args.categoryId && args.categoryType) {
+                    const table = args.categoryType === "industry" ? "watchlist_industry_items" : "watchlist_theme_items";
+                    query = `
+						SELECT w.*, ci.weight as relWeight
+						FROM watchlist w
+						JOIN ${table} ci ON w.id = ci.watchlistId
+						WHERE w.userId = ? AND w.isDeleted = 0 AND ci.categoryId = ?
+						ORDER BY ci.weight DESC, w.sortOrder ASC
+					`;
+                    params.push(args.categoryId);
+                }
+                else {
+                    query = `
+						SELECT w.*, (
+							SELECT MAX(total.weight) FROM (
+								SELECT weight FROM watchlist_industry_items WHERE watchlistId = w.id
+								UNION ALL
+								SELECT weight FROM watchlist_theme_items WHERE watchlistId = w.id
+								UNION ALL
+								SELECT 0 as weight
+							) total
+						) as globalWeight
+						FROM watchlist w
+						WHERE w.userId = ? AND w.isDeleted = 0
+						ORDER BY globalWeight DESC, w.sortOrder ASC
+					`;
+                }
+                const stocks = db.prepare(query).all(...params);
+                const fullList = stocks.map(stock => {
+                    const industries = db.prepare(`
+						SELECT c.name FROM watchlist_categories c
+						JOIN watchlist_industry_items i ON c.id = i.categoryId
+						WHERE i.watchlistId = ? ORDER BY i.weight DESC
+					`).all(stock.id);
+                    const themes = db.prepare(`
+						SELECT c.name FROM watchlist_categories c
+						JOIN watchlist_theme_items t ON c.id = t.categoryId
+						WHERE t.watchlistId = ? ORDER BY t.weight DESC
+					`).all(stock.id);
+                    return {
+                        ...stock,
+                        industries: industries.map(i => i.name),
+                        themes: themes.map(t => t.name)
+                    };
+                });
+                return JSON.stringify({ success: true, data: fullList });
+            }
+            catch (e) {
+                return JSON.stringify({ success: false, error: e.message });
+            }
+        }
+    },
+    get_thematic_dashboard: {
+        name: "get_thematic_dashboard",
+        description: "获取聚合后的主题/行业看板数据",
+        parameters: z.object({}),
+        execute: async (_args, ctx) => {
+            try {
+                const db = getDB();
+                const uId = String(ctx.userId);
+                const industryData = db.prepare(`
+					SELECT c.name as category_name, i.weight, w.stockCode
+					FROM watchlist_categories c
+					JOIN watchlist_industry_items i ON c.id = i.categoryId
+					JOIN watchlist w ON i.watchlistId = w.id
+					WHERE i.userId = ? AND w.isDeleted = 0
+				`).all(uId);
+                const themeData = db.prepare(`
+					SELECT c.name as category_name, t.weight, w.stockCode
+					FROM watchlist_categories c
+					JOIN watchlist_theme_items t ON c.id = t.categoryId
+					JOIN watchlist w ON t.watchlistId = w.id
+					WHERE t.userId = ? AND w.isDeleted = 0
+				`).all(uId);
+                const combined = [...industryData, ...themeData];
+                const aggMap = new Map();
+                combined.forEach(item => {
+                    const name = item.category_name;
+                    const existing = aggMap.get(name) || { category_name: name, weight_total: 0, stocks: [] };
+                    existing.weight_total += (item.weight || 0);
+                    if (!existing.stocks.includes(item.stockCode)) {
+                        existing.stocks.push(item.stockCode);
+                    }
+                    aggMap.set(name, existing);
+                });
+                const result = Array.from(aggMap.values()).sort((a, b) => b.weight_total - a.weight_total);
+                return JSON.stringify({ success: true, data: result });
+            }
+            catch (e) {
+                return JSON.stringify({ success: false, error: e.message });
+            }
+        }
+    },
+    get_watchlist_tabs: {
+        name: "get_watchlist_tabs",
+        description: "获取分类页签",
+        parameters: z.object({}),
+        execute: async (_args, ctx) => {
+            try {
+                const db = getDB();
+                const uId = String(ctx.userId);
+                const industries = db.prepare(`
+					SELECT DISTINCT c.id, c.name, c.type, c.sortOrder
+					FROM watchlist_categories c
+					JOIN watchlist_industry_items i ON c.id = i.categoryId
+					WHERE i.userId = ?
+					ORDER BY c.sortOrder ASC, c.name ASC
+				`).all(uId);
+                const themes = db.prepare(`
+					SELECT DISTINCT c.id, c.name, c.type, c.sortOrder
+					FROM watchlist_categories c
+					JOIN watchlist_theme_items t ON c.id = t.categoryId
+					WHERE t.userId = ?
+					ORDER BY c.sortOrder ASC, c.name ASC
+				`).all(uId);
+                const tabs = [
+                    { id: "all", name: "全部", type: "all" },
+                    ...industries.map(i => ({ id: i.id, name: i.name, type: "industry" })),
+                    ...themes.map(t => ({ id: t.id, name: t.name, type: "theme" }))
+                ];
+                return JSON.stringify({ success: true, data: tabs });
+            }
+            catch (e) {
+                return JSON.stringify({ success: false, error: e.message });
+            }
+        }
+    },
+    smart_reorder_watchlist: {
+        name: "smart_reorder_watchlist",
+        description: "触发 AI 智能排序",
+        parameters: z.object({}),
+        execute: async (_args, ctx) => {
+            if (!ctx.runtime)
+                return JSON.stringify({ success: false, error: "Runtime not available" });
+            const db = getDB();
+            const uId = String(ctx.userId);
+            try {
+                const stocks = db.prepare("SELECT stockCode as code, stockName as name FROM watchlist WHERE userId = ? AND isDeleted = 0").all(uId);
+                if (stocks.length === 0)
+                    return JSON.stringify({ success: true, message: "没有可排序的股票" });
+                const sortedResults = await watchlistLogic.applySmartSort(ctx.runtime, `sort-${uId}`, stocks);
+                if (sortedResults.length > 0) {
+                    db.exec("BEGIN TRANSACTION");
+                    const stmt = db.prepare(`
+						UPDATE watchlist SET sortOrder = ?, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
+						WHERE userId = ? AND stockCode = ? AND isDeleted = 0
+					`);
+                    sortedResults.forEach((item, i) => {
+                        const currentOrder = i * 10;
+                        stmt.run(currentOrder, uId, item.code);
+                    });
+                    db.exec("COMMIT");
+                    return JSON.stringify({ success: true, message: "智能排序已完成" });
+                }
+                return JSON.stringify({ success: false, error: "AI 未能返回有效的排序结果" });
+            }
+            catch (e) {
+                if (db.inTransaction)
+                    db.exec("ROLLBACK");
+                return JSON.stringify({ success: false, error: e.message });
+            }
+        }
+    },
+    sync_watchlist_categories: {
+        name: "sync_watchlist_categories",
+        description: "同步分类字典",
+        parameters: SyncCategoriesParamsSchema,
+        execute: async (args, ctx) => {
+            const db = getDB();
+            const uId = String(ctx.userId);
+            db.exec("BEGIN TRANSACTION");
+            try {
+                if (args.industries) {
+                    for (const name of args.industries) {
+                        db.prepare(`
+							INSERT INTO watchlist_categories (id, remoteId, userId, name, type, weight, sortOrder)
+							VALUES (?, ?, ?, ?, 'industry', 0, 0)
+							ON CONFLICT(userId, remoteId) DO UPDATE SET name = excluded.name, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
+							ON CONFLICT(userId, name, type) DO UPDATE SET remoteId = excluded.remoteId, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
+						`).run(randomUUID(), name, uId, name);
+                    }
+                }
+                if (args.themes) {
+                    for (const name of args.themes) {
+                        db.prepare(`
+							INSERT INTO watchlist_categories (id, remoteId, userId, name, type, weight, sortOrder)
+							VALUES (?, ?, ?, ?, 'theme', 0, 0)
+							ON CONFLICT(userId, remoteId) DO UPDATE SET name = excluded.name, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
+							ON CONFLICT(userId, name, type) DO UPDATE SET remoteId = excluded.remoteId, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
+						`).run(randomUUID(), name, uId, name);
+                    }
+                }
+                db.exec("COMMIT");
+                return JSON.stringify({ success: true });
+            }
+            catch (e) {
+                db.exec("ROLLBACK");
+                return JSON.stringify({ success: false, error: e.message });
+            }
+        }
+    },
+    batch_update_sort_orders: {
+        name: "batch_update_sort_orders",
+        description: "批量更新排序",
+        parameters: BatchUpdateSortOrdersParamsSchema,
+        execute: async (args, ctx) => {
+            const db = getDB();
+            const uId = String(ctx.userId);
+            db.exec("BEGIN TRANSACTION");
+            try {
+                const stmt = db.prepare(`UPDATE watchlist SET sortOrder = ?, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW') WHERE id = ? AND userId = ? AND isDeleted = 0`);
+                args.orderedIds.forEach((id, i) => {
+                    const weight = i * 1024;
+                    stmt.run(weight, id, uId);
+                });
+                db.exec("COMMIT");
+                return JSON.stringify({ success: true });
+            }
+            catch (e) {
+                db.exec("ROLLBACK");
+                return JSON.stringify({ success: false, error: e.message });
+            }
+        }
+    },
+    reset_watchlist_classification: {
+        name: "reset_watchlist_classification",
+        description: "清除并重新进行智能分类",
+        parameters: z.object({}),
+        execute: async (_args, ctx) => {
+            if (!ctx.runtime)
+                return JSON.stringify({ success: false, error: "Runtime not available" });
+            const db = getDB();
+            const uId = String(ctx.userId);
+            db.exec("BEGIN TRANSACTION");
+            try {
+                db.prepare("DELETE FROM watchlist_industry_items WHERE userId = ?").run(uId);
+                db.prepare("DELETE FROM watchlist_theme_items WHERE userId = ?").run(uId);
+                const stocks = db.prepare("SELECT stockName, stockCode, exchange, market FROM watchlist WHERE userId = ? AND isDeleted = 0").all(uId);
+                if (stocks.length > 0) {
+                    watchlistLogic.getBatchStockClassification(ctx.runtime, stocks, uId, { forceRefresh: true })
+                        .then(batchResults => {
+                        const db2 = getDB();
+                        const userStocks = db2.prepare("SELECT id, stockCode, exchange FROM watchlist WHERE userId = ? AND isDeleted = 0").all(uId);
+                        batchResults.forEach((res, i) => {
+                            if (res) {
+                                const s = stocks[i];
+                                const match = userStocks.find(us => us.stockCode === s.stockCode && us.exchange === s.exchange);
+                                if (match) {
+                                    upsertStockClassificationCache(db2, {
+                                        stockName: s.stockName,
+                                        stockCode: s.stockCode,
+                                        exchange: s.exchange,
+                                        market: s.market
+                                    }, res);
+                                    const cats = [
+                                        ...(res.industry ? [{ name: res.industry.name, type: 'industry', weight: res.industry.weight }] : []),
+                                        ...res.theme.map((t) => ({ name: t.name, type: 'theme', weight: t.weight }))
+                                    ];
+                                    cats.forEach(c => {
+                                        const catId = watchlistLogic._ensureCategory(db2, c.name, c.type, uId);
+                                        if (catId) {
+                                            const table = c.type === 'industry' ? 'watchlist_industry_items' : 'watchlist_theme_items';
+                                            db2.prepare(`INSERT OR IGNORE INTO ${table} (id, watchlistId, userId, categoryId, weight) VALUES (?, ?, ?, ?, ?)`).run(randomUUID(), match.id, uId, catId, c.weight);
+                                        }
+                                    });
+                                }
+                            }
+                        });
+                    }).catch(err => console.error("[Watchlist] 重置分类失败:", err));
+                }
+                db.exec("COMMIT");
+                return JSON.stringify({ success: true, message: "重置分类请求已提交" });
+            }
+            catch (e) {
+                db.exec("ROLLBACK");
+                return JSON.stringify({ success: false, error: e.message });
+            }
+        }
+    }
+};
+//# sourceMappingURL=tools.js.map

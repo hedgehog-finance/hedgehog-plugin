@@ -1,7 +1,7 @@
 import { defineChannelPluginEntry } from "openclaw/plugin-sdk/channel-core";
-import { hedgehogFinancePlugin } from "./src/channel";
-import { setHedgehogRuntime } from "./src/runtime";
-import { allFeaturesTools } from "./src/features";
+import { hedgehogFinancePlugin } from "./src/channel.js";
+import { setHedgehogRuntime } from "./src/runtime.js";
+import { allFeaturesTools } from "./src/features/index.js";
 
 export default defineChannelPluginEntry({
 	id: "hedgehog_finance",

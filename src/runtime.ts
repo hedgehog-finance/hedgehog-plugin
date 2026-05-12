@@ -1,7 +1,7 @@
 import type { PluginRuntime } from "openclaw/plugin-sdk/channel-core";
 import path from "path";
 import * as os from "node:os";
-import { logger } from "./core/logger";
+import { logger } from "./core/logger.js";
 
 let runtime: PluginRuntime | null = null;
 let dbPath: string = "";

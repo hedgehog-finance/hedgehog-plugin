@@ -3,9 +3,9 @@ import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "openclaw/plugin-sdk/zod";
 import { PluginRuntime } from "openclaw/plugin-sdk";
-import { getDB } from "../../core/database";
-import { logger } from "../../core/logger";
-import { watchlistLogic } from "./logic";
+import { getDB } from "../../core/database.js";
+import { logger } from "../../core/logger.js";
+import { watchlistLogic } from "./logic.js";
 import {
 	AddToWatchlistParams,
 	AddToWatchlistParamsSchema,
@@ -19,7 +19,7 @@ import {
 	SyncCategoriesParamsSchema,
 	BatchUpdateSortOrdersParams,
 	BatchUpdateSortOrdersParamsSchema
-} from "./schema";
+} from "./schema.js";
 
 let watchlistMutationQueue: Promise<void> = Promise.resolve();
 

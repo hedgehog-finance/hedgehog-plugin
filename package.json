@@ -1,6 +1,6 @@
 {
   "name": "@hedgehog-finance/hedgehog-plugin",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "description": "Hedgehog App WebSocket channel and Watchlist Tools for OpenClaw",
   "keywords": [
     "bot",
@@ -11,10 +11,23 @@
     "hedgehog-app"
   ],
   "repository": "github:hedgehog-finance/hedgehog-plugin",
-  "main": "index.ts",
+  "main": "dist/index.js",
   "type": "module",
   "author": "Hedgehog Finance",
   "license": "MIT",
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.js.map",
+    "dist/**/*.d.ts",
+    "index.ts",
+    "src/**/*.ts",
+    "openclaw.plugin.json",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build"
+  },
   "dependencies": {
     "@mariozechner/pi-ai": "^0.66.1",
     "pino": "^9.0.0",
@@ -32,17 +45,20 @@
     "extensions": [
       "./index.ts"
     ],
+    "runtimeExtensions": [
+      "./dist/index.js"
+    ],
     "install": {
       "npmSpec": "@hedgehog-finance/hedgehog-plugin",
       "defaultChoice": "npm"
     },
     "compat": {
-      "pluginApi": ">=2026.4.15",
-      "minGatewayVersion": "2026.4.15"
+      "pluginApi": ">=2026.5.4",
+      "minGatewayVersion": "2026.5.4"
     },
     "build": {
-      "openclawVersion": "2026.4.15",
-      "pluginSdkVersion": "2026.4.15"
+      "openclawVersion": "2026.5.4",
+      "pluginSdkVersion": "2026.5.4"
     }
   }
 }

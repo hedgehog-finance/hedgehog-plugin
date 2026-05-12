@@ -1,5 +1,3 @@
-import { watchlistTools } from "./watchlist/tools.js";
-
 /**
  * Runtime tool shape used for dynamic RPC dispatch and registerTool.
  *
@@ -14,13 +12,11 @@ export interface RuntimeTool {
     description: string;
     parameters: unknown;
     registerTool?: boolean;
-    // bivariant method signature — allows specific param types
-    execute(params: unknown, ctx: { userId: string }): Promise<string>;
+    execute(params: unknown, ctx: {
+        userId: string;
+    }): Promise<string>;
 }
-
 /**
  * Aggregated export of all tools across all features.
  */
-export const allFeaturesTools: Record<string, RuntimeTool> = {
-    ...watchlistTools
-};
+export declare const allFeaturesTools: Record<string, RuntimeTool>;

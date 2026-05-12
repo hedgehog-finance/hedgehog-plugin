@@ -3,8 +3,8 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, existsSync, copyFileSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import path from "node:path";
-import { getDbPath, getBackupDir } from "../runtime";
-import { logger } from "./logger";
+import { getDbPath, getBackupDir } from "../runtime.js";
+import { logger } from "./logger.js";
 
 let _db: any = null;
 let _backupJobStarted = false;

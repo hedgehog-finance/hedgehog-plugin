@@ -5,9 +5,9 @@ import {
 	extractAssistantText,
 	prepareSimpleCompletionModel
 } from "openclaw/plugin-sdk/simple-completion-runtime";
-import { getDB } from "../../core/database";
-import { logger } from "../../core/logger";
-import { StockClassification, StockClassificationSchema } from "../../types";
+import { getDB } from "../../core/database.js";
+import { logger } from "../../core/logger.js";
+import { StockClassification, StockClassificationSchema } from "../../types.js";
 
 interface GlobalStockMetadataRow {
 	industryJson: string;
