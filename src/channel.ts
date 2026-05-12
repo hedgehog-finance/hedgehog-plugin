@@ -62,12 +62,50 @@ async function getSessionEntryAsync(agentId: string, sessionKey: string) {
 			inputTokens: entry.inputTokens || 0,
 			outputTokens: entry.outputTokens || 0,
 			totalTokens: entry.totalTokens || 0,
+			cacheRead: entry.cacheRead || 0,
+			cacheWrite: entry.cacheWrite || 0,
+			estimatedCostUsd: entry.estimatedCostUsd || 0,
 			model: entry.model,
 			modelProvider: entry.modelProvider,
 		};
 	} catch (err) {
 		return null;
 	}
+}
+
+function toFiniteNumber(...values: unknown[]): number | undefined {
+	for (const value of values) {
+		if (value === undefined || value === null || value === "") continue;
+		const num = Number(value);
+		if (Number.isFinite(num)) return num;
+	}
+	return undefined;
+}
+
+function normalizeUsageSnapshot(usageRaw: any) {
+	if (!usageRaw || typeof usageRaw !== "object" || Array.isArray(usageRaw)) {
+		return null;
+	}
+
+	const inputDetails = usageRaw.input_tokens_details || usageRaw.inputTokenDetails || usageRaw.prompt_tokens_details || usageRaw.promptTokenDetails || {};
+	const outputDetails = usageRaw.output_tokens_details || usageRaw.outputTokenDetails || usageRaw.completion_tokens_details || usageRaw.completionTokenDetails || {};
+	const input = toFiniteNumber(usageRaw.input, usageRaw.inputTokens, usageRaw.input_tokens, usageRaw.prompt, usageRaw.promptTokens, usageRaw.prompt_tokens);
+	const output = toFiniteNumber(usageRaw.output, usageRaw.outputTokens, usageRaw.output_tokens, usageRaw.completion, usageRaw.completionTokens, usageRaw.completion_tokens);
+	const cacheRead = toFiniteNumber(usageRaw.cacheRead, usageRaw.cache_read, usageRaw.cachedTokens, usageRaw.cached_tokens, inputDetails.cacheRead, inputDetails.cache_read, inputDetails.cachedTokens, inputDetails.cached_tokens);
+	const cacheWrite = toFiniteNumber(usageRaw.cacheWrite, usageRaw.cache_write, usageRaw.cacheCreation, usageRaw.cache_creation, inputDetails.cacheWrite, inputDetails.cache_write, inputDetails.cacheCreation, inputDetails.cache_creation);
+	const reasoning = toFiniteNumber(usageRaw.reasoning, usageRaw.reasoningTokens, usageRaw.reasoning_tokens, outputDetails.reasoning, outputDetails.reasoningTokens, outputDetails.reasoning_tokens);
+	const total = toFiniteNumber(usageRaw.total, usageRaw.totalTokens, usageRaw.total_tokens) ??
+		(input || 0) + (output || 0) + (cacheRead || 0) + (cacheWrite || 0) + (reasoning || 0);
+	const cost = toFiniteNumber(usageRaw.costUsd, usageRaw.cost_usd, usageRaw.cost, usageRaw.cost?.total, usageRaw.cost?.usd);
+
+	return {
+		input: input || 0,
+		output: output || 0,
+		cacheRead: cacheRead || 0,
+		cacheWrite: cacheWrite || 0,
+		total: total || 0,
+		cost: cost || 0,
+	};
 }
 
 /**
@@ -108,14 +146,14 @@ async function readUsageFromJsonlAsync(agentId: string, sessionId: string, after
 		for (let i = afterLine; i < lines.length; i++) {
 			try {
 				const entry = JSON.parse(lines[i]);
-				if (entry.type === "message" && entry.message?.role === "assistant" && entry.message?.usage) {
-					const u = entry.message.usage;
+				const message = entry.message && typeof entry.message === "object" && !Array.isArray(entry.message) ? entry.message : undefined;
+				if (message?.role && message.role !== "assistant") continue;
+				const usage = normalizeUsageSnapshot(message?.usage || entry.usage);
+				if (usage) {
 					return {
-						input: u.input || 0,
-						output: u.output || 0,
-						total: u.totalTokens || 0,
-						model: entry.message.model,
-						provider: entry.message.provider,
+						...usage,
+						model: message?.model || entry.model,
+						provider: message?.provider || entry.provider,
 					};
 				}
 			} catch {
@@ -152,8 +190,12 @@ async function getCurrentTurnUsageAsync(
 				input: entry.inputTokens,
 				output: entry.outputTokens,
 				total: entry.totalTokens,
+				cacheRead: entry.cacheRead,
+				cacheWrite: entry.cacheWrite,
+				cost: entry.estimatedCostUsd,
 				model: entry.model,
 				provider: entry.modelProvider,
+				source: "sessions.json",
 			};
 		}
 	}
@@ -179,8 +221,12 @@ async function getCurrentTurnUsageAsync(
 				input: usage.input,
 				output: usage.output,
 				total: usage.total,
+				cacheRead: usage.cacheRead,
+				cacheWrite: usage.cacheWrite,
+				cost: usage.cost,
 				model: usage.model,
 				provider: usage.provider,
+				source: "jsonl",
 			};
 		}
 	}
@@ -476,6 +522,70 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 
 
 					const normalizeId = (rawId?: string) => rawId?.replace(/^(command:|tool:|call_)/, '');
+					let hasSentModelEvent = false;
+
+					const sendModelEvent = (payload: { provider?: string; model?: string; thinkLevel?: string }) => {
+						if (!payload.provider && !payload.model) return;
+						if (hasSentModelEvent) return;
+						hasSentModelEvent = true;
+						sendEvent("model", payload);
+					};
+
+					const sendFinalReplyAndUsage = async () => {
+						const durationMs = Date.now() - startTime;
+
+						if (ws?.readyState !== WebSocket.OPEN) return;
+
+						ws.send(JSON.stringify({
+							type: "reply",
+							to: from,
+							chatId: chatId,
+							replyTo: id,
+							isFinal: true,
+							fromCode: code
+						}));
+
+						const turnUsage = await getCurrentTurnUsageAsync(
+							agentId,
+							sessionKey,
+							sessionIdBefore,
+							lineCountBefore
+						);
+
+						if (ws?.readyState !== WebSocket.OPEN) return;
+						sendModelEvent({
+							provider: turnUsage?.provider,
+							model: turnUsage?.model,
+						});
+
+						ws.send(JSON.stringify({
+							type: "usage",
+							to: from,
+							chatId: chatId,
+							replyTo: id,
+							usage: {
+								input: turnUsage?.input || 0,
+								output: turnUsage?.output || 0,
+								total: turnUsage?.total || 0,
+								cacheRead: turnUsage?.cacheRead || 0,
+								cacheWrite: turnUsage?.cacheWrite || 0,
+							},
+							costUsd: turnUsage?.cost || 0,
+							durationMs: durationMs,
+							model: turnUsage?.model,
+							provider: turnUsage?.provider,
+							usageAvailable: Boolean(turnUsage),
+							usageSource: turnUsage?.source || "unavailable",
+							usageDebug: turnUsage ? undefined : {
+								agentId,
+								sessionKey,
+								sessionIdBefore,
+								lineCountBefore,
+								stateDir: getStateDir()
+							},
+							fromCode: code
+						}));
+					};
 
 					const replyOpts = {
 						verboseLevel: 'full',
@@ -498,7 +608,14 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 							}
 						},
 						onReasoningEnd: () => sendEvent("reasoning_end"),
-						onAssistantMessageStart: () => sendEvent("assistant_message_start"),
+						onAssistantMessageStart: () => {
+							sentLengthMap[chatId] = 0;
+							reasoningLengthMap[chatId] = 0;
+							sendEvent("assistant_message_start");
+						},
+						onModelSelected: (payload: { provider?: string; model?: string; thinkLevel?: string }) => {
+							sendModelEvent(payload);
+						},
 						onItemEvent: (payload: { itemId?: string; toolCallId?: string; kind?: string; title?: string; name?: string; status?: string; summary?: string }) => {
 							const rawId = payload.itemId || payload.toolCallId || `temp_${payload.kind || 'item'}_${payload.title || payload.name || 'unnamed'}`;
 							const itemId = normalizeId(rawId);
@@ -512,47 +629,6 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 							if (payload.output || payload.exitCode !== undefined || payload.status === 'completed') {
 								sendEvent("command_output", { ...payload, output: full, itemId });
 							}
-						},
-						onEnd: async () => {
-							const durationMs = Date.now() - startTime;
-
-							if (ws?.readyState === WebSocket.OPEN) {
-								ws.send(JSON.stringify({
-									type: "reply",
-									to: from,
-									chatId: chatId,
-									replyTo: id,
-									isFinal: true,
-									fromCode: code
-								}));
-
-								const turnUsage = await getCurrentTurnUsageAsync(
-									agentId,
-									sessionKey,
-									sessionIdBefore,
-									lineCountBefore
-								);
-
-								if (turnUsage) {
-									ws.send(JSON.stringify({
-										type: "usage",
-										to: from,
-										chatId: chatId,
-										replyTo: id,
-										usage: {
-											input: turnUsage.input,
-											output: turnUsage.output,
-											total: turnUsage.total,
-										},
-										durationMs: durationMs,
-										model: turnUsage.model,
-										provider: turnUsage.provider,
-										fromCode: code
-									}));
-								}
-							}
-							delete sentLengthMap[chatId];
-							delete reasoningLengthMap[chatId];
 						}
 					};
 					// 1. 显式类型化的配置 (保证观测开启)
@@ -574,24 +650,30 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 					// 3. 准备回复选项
 					const finalReplyOpts = { ...replyOpts } as RawReplyOptions;
 
-					// 4. 执行稳定分发
-					await rt.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
-						cfg: finalCfg,
-						ctx: context,
-						replyOptions: finalReplyOpts,
-						dispatcherOptions: {
-							deliver: async (payload, info) => {
-								// 原有的兜底逻辑保持不变
-								const cd = payload.channelData;
-								if (cd && (cd.toolCallId || cd.itemId)) {
-									sendEvent("tool_result", {
-										...payload,
-										toolCallId: normalizeId(String(cd.toolCallId || cd.itemId || ""))
-									});
-								}
-							},
-						}
-					});
+					try {
+						// 4. 执行稳定分发
+						await rt.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
+							cfg: finalCfg,
+							ctx: context,
+							replyOptions: finalReplyOpts,
+							dispatcherOptions: {
+								deliver: async (payload, info) => {
+									// 原有的兜底逻辑保持不变
+									const cd = payload.channelData;
+									if (cd && (cd.toolCallId || cd.itemId)) {
+										sendEvent("tool_result", {
+											...payload,
+											toolCallId: normalizeId(String(cd.toolCallId || cd.itemId || ""))
+										});
+									}
+								},
+							}
+						});
+						await sendFinalReplyAndUsage();
+					} finally {
+						delete sentLengthMap[chatId];
+						delete reasoningLengthMap[chatId];
+					}
 				} catch (err: any) {
 					childLogger.error({ err: err.message }, "Dispatch error");
 				}
