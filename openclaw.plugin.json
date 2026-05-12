@@ -10,5 +10,38 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {}
+  },
+  "channelConfigs": {
+    "hedgehog_finance": {
+      "label": "Hedgehog Finance",
+      "description": "Custom WebSocket relay channel for Hedgehog App",
+      "schema": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "accountId": {
+            "type": "string"
+          },
+          "token": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          }
+        }
+      },
+      "uiHints": {
+        "accountId": {
+          "label": "Account ID"
+        },
+        "token": {
+          "label": "Token",
+          "sensitive": true
+        },
+        "code": {
+          "label": "Device code"
+        }
+      }
+    }
   }
 }
