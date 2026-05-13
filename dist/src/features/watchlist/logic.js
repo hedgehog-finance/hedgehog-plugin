@@ -161,17 +161,10 @@ function extractJsonArray(text) {
     }
     return parsed;
 }
-/**
- * 智能分类元数据引擎
- */
 export const watchlistLogic = {
     _normalizeStockCodeForCache: normalizeStockCodeForCache,
-    /**
-     * 获取单只股票的分类与权重（带全局缓存）
-     */
     async getStockClassification(rt, stockName, stockCode, exchange, _userId) {
         const db = getDB();
-        // 1. 尝试从全局缓存读取
         const cached = getCachedClassificationRow(db, stockCode, exchange);
         if (cached && cached.industryJson) {
             try {
@@ -186,17 +179,11 @@ export const watchlistLogic = {
                     weight: 50
                 });
             }
-            catch (e) {
-                // 容错
-            }
+            catch { }
         }
-        // 2. 缓存未命中，调用 AI 进行推断
         const classification = await watchlistLogic._autoClassifyWithAI(rt, stockName, stockCode, exchange);
         return classification;
     },
-    /**
-     * 批量获取股票分类
-     */
     async classifyStocksTogether(rt, stocks, _userId) {
         const db = getDB();
         const results = new Array(stocks.length).fill(null);
@@ -217,9 +204,7 @@ export const watchlistLogic = {
                     });
                     return;
                 }
-                catch {
-                    // 缓存损坏时重新分析
-                }
+                catch { }
             }
             pendingStocks.push({
                 idx,
@@ -371,9 +356,6 @@ export const watchlistLogic = {
             themes: themes.map(t => t.name)
         };
     },
-    /**
-     * 内部 AI 实现 (适配新协议)
-     */
     async _autoClassifyWithAI(rt, stockName, stockCode, exchange) {
         const db = getDB();
         const cats = watchlistLogic._getKnownCategories(db);
@@ -384,7 +366,7 @@ export const watchlistLogic = {
         const aiText = await watchlistLogic._callClassifierAi(rt, `classify-${stockCode}`, prompt, SINGLE_CLASSIFICATION_TIMEOUT_MS);
         try {
             const parsed = extractJsonArray(aiText);
-            const raw = parsed[0]; // 单只股票也是数组格式
+            const raw = parsed[0];
             if (raw) {
                 return watchlistLogic._parseClassification(raw, cats, stockName || stockCode);
             }

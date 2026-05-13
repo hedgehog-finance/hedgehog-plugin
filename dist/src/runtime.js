@@ -7,7 +7,6 @@ let backupDir = "";
 export function setHedgehogRuntime(next) {
     runtime = next;
     try {
-        // 从配置里读取 hedgehog-finance 的 workspace
         const cfg = next.config.loadConfig();
         const agentList = (cfg.agents?.list || []);
         const hedgehogAgent = agentList.find((a) => a.id === "hedgehog-finance");

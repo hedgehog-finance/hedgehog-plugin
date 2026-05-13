@@ -1,18 +1,9 @@
 import { PluginRuntime } from "openclaw/plugin-sdk";
 import { StockClassification } from "../../types.js";
 declare function normalizeStockCodeForCache(stockCode: string, exchange?: string): string;
-/**
- * 智能分类元数据引擎
- */
 export declare const watchlistLogic: {
     _normalizeStockCodeForCache: typeof normalizeStockCodeForCache;
-    /**
-     * 获取单只股票的分类与权重（带全局缓存）
-     */
     getStockClassification(rt: PluginRuntime, stockName: string, stockCode: string, exchange: string, _userId: string): Promise<StockClassification | null>;
-    /**
-     * 批量获取股票分类
-     */
     classifyStocksTogether(rt: PluginRuntime, stocks: any[], _userId: string): Promise<StockClassification[]>;
     getBatchStockClassification(rt: PluginRuntime, stocks: any[], _userId: string, options?: {
         requireComplete?: boolean;
@@ -22,9 +13,6 @@ export declare const watchlistLogic: {
         industries: any[];
         themes: any[];
     };
-    /**
-     * 内部 AI 实现 (适配新协议)
-     */
     _autoClassifyWithAI(rt: PluginRuntime, stockName: string, stockCode: string, exchange: string): Promise<StockClassification | null>;
     _callClassifierCompletion(rt: PluginRuntime, sessionId: string, prompt: string, timeoutMs: number): Promise<string>;
     _callClassifierAi(rt: PluginRuntime, sessionId: string, prompt: string, timeoutMs: number): Promise<string>;

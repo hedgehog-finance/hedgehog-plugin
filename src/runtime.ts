@@ -11,7 +11,6 @@ export function setHedgehogRuntime(next: PluginRuntime): void {
 	runtime = next;
 
 	try {
-		// 从配置里读取 hedgehog-finance 的 workspace
 		const cfg = next.config.loadConfig();
 		const agentList = (cfg.agents?.list || []) as { id: string, workspace?: string }[];
 		const hedgehogAgent = agentList.find((a) => a.id === "hedgehog-finance");

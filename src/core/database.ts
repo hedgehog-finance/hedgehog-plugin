@@ -1,4 +1,3 @@
-// src/db/sqlite.ts
 // @ts-ignore
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, existsSync, copyFileSync, readdirSync, statSync, unlinkSync } from "node:fs";
@@ -162,7 +161,6 @@ export function getDB(): DatabaseSync {
 		_db.exec("PRAGMA journal_mode = WAL");
 		_db.exec("PRAGMA synchronous = NORMAL");
 
-		// 1. 基础表结构
 		_db.exec(`
         CREATE TABLE IF NOT EXISTS watchlist (
 			id         TEXT PRIMARY KEY,

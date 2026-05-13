@@ -7,23 +7,14 @@ import { emptyChannelConfigSchema } from "openclaw/plugin-sdk/core";
 import { getHedgehogRuntime } from "./runtime.js";
 import { logger } from "./core/logger.js";
 import { allFeaturesTools } from "./features/index.js";
-/**
- * Unix timestamp
- */
 function getCurrentTimestamp() {
     return Date.now();
 }
-/**
- * 获取 OpenClaw state 目录
- */
 function getStateDir() {
     return process.env.OPENCLAW_STATE_DIR ||
         process.env.CLAWD_STATE_DIR ||
         path.join(os.homedir(), ".openclaw");
 }
-/**
- * [修改] 异步从 sessions.json 获取 session entry
- */
 async function getSessionEntryAsync(agentId, sessionKey) {
     try {
         const stateDir = getStateDir();
@@ -86,9 +77,53 @@ function normalizeUsageSnapshot(usageRaw) {
         cost: cost || 0,
     };
 }
-/**
- * [修改] 异步获取 .jsonl 文件的当前行数
- */
+function formatArgumentValue(value) {
+    if (typeof value === "string") {
+        const firstLine = value.trim().split(/\r?\n/)[0]?.trim();
+        if (!firstLine)
+            return;
+        return firstLine.length > 240 ? `${firstLine.slice(0, 237)}...` : firstLine;
+    }
+    if (typeof value === "number" && Number.isFinite(value))
+        return String(value);
+    if (typeof value === "boolean")
+        return value ? "true" : "false";
+    if (Array.isArray(value)) {
+        const formatted = value.map(formatArgumentValue).filter(Boolean);
+        if (!formatted.length)
+            return;
+        const preview = formatted.slice(0, 3).join(", ");
+        return formatted.length > 3 ? `${preview}, ...` : preview;
+    }
+    return undefined;
+}
+function resolveArgumentDisplay(args) {
+    if (!args)
+        return;
+    const preferredKeys = ["command", "path", "file_path", "filePath", "url", "query", "action"];
+    for (const key of preferredKeys) {
+        const value = formatArgumentValue(args[key]);
+        if (value)
+            return value;
+    }
+    for (const [key, rawValue] of Object.entries(args)) {
+        const value = formatArgumentValue(rawValue);
+        if (value)
+            return `${key} ${value}`;
+    }
+}
+function shouldDisplayToolProgress(name) {
+    if (typeof name !== "string")
+        return true;
+    return !new Set([
+        "session_status",
+        "heartbeat_respond",
+        "heartbeat_response",
+        "tool_call",
+        "tool_call_update",
+        "update_plan",
+    ]).has(name);
+}
 async function getJsonlLineCountAsync(agentId, sessionId) {
     try {
         const stateDir = getStateDir();
@@ -103,9 +138,6 @@ async function getJsonlLineCountAsync(agentId, sessionId) {
         return 0;
     }
 }
-/**
- * [修改] 异步从 .jsonl session 文件读取指定行号之后的第一条 assistant 消息的 usage
- */
 async function readUsageFromJsonlAsync(agentId, sessionId, afterLine) {
     try {
         const stateDir = getStateDir();
@@ -115,7 +147,6 @@ async function readUsageFromJsonlAsync(agentId, sessionId, afterLine) {
         }
         const content = await fsAsync.readFile(jsonlPath, "utf-8");
         const lines = content.trim().split("\n").filter(Boolean);
-        // 从 afterLine 开始向后找第一条 assistant 消息
         for (let i = afterLine; i < lines.length; i++) {
             try {
                 const entry = JSON.parse(lines[i]);
@@ -141,11 +172,7 @@ async function readUsageFromJsonlAsync(agentId, sessionId, afterLine) {
         return null;
     }
 }
-/**
- * [修改] 异步获取本轮对话的 token 用量
- */
 async function getCurrentTurnUsageAsync(agentId, sessionKey, sessionIdBefore, lineCountBefore, maxRetries = 60, retryDelayMs = 100) {
-    // 第一阶段：尝试从 sessions.json 读取
     for (let attempt = 0; attempt < 40; attempt++) {
         if (attempt > 0) {
             await new Promise(r => setTimeout(r, retryDelayMs));
@@ -165,7 +192,6 @@ async function getCurrentTurnUsageAsync(agentId, sessionKey, sessionIdBefore, li
             };
         }
     }
-    // 第二阶段：Fallback 到 .jsonl 文件
     const entry = await getSessionEntryAsync(agentId, sessionKey);
     const sessionId = entry?.sessionId || sessionIdBefore;
     if (!sessionId) {
@@ -193,9 +219,6 @@ async function getCurrentTurnUsageAsync(agentId, sessionKey, sessionIdBefore, li
     }
     return null;
 }
-/**
- * Hedgehog Finance Channel Plugin
- */
 export const hedgehogFinancePlugin = {
     id: "hedgehog_finance",
     meta: {
@@ -276,14 +299,15 @@ export const hedgehogFinancePlugin = {
             let ws = null;
             let isClosing = false;
             let heartbeatInterval = null;
-            // [状态管理分离]
             const sentLengthMap = {};
             const reasoningLengthMap = {};
-            const commandOutputMap = new Map(); // [新增] 命令输出缓存: itemId -> fullOutput
+            const commandOutputMap = new Map();
+            const toolArgumentsMap = new Map();
             const clearStreamStates = () => {
                 Object.keys(sentLengthMap).forEach(k => delete sentLengthMap[k]);
                 Object.keys(reasoningLengthMap).forEach(k => delete reasoningLengthMap[k]);
                 commandOutputMap.clear();
+                toolArgumentsMap.clear();
             };
             let resolveStop;
             const stopPromise = new Promise((resolve) => {
@@ -295,7 +319,7 @@ export const hedgehogFinancePlugin = {
                 isClosing = true;
                 if (heartbeatInterval)
                     clearInterval(heartbeatInterval);
-                clearStreamStates(); // [生命周期管理]：清理内存状态
+                clearStreamStates();
                 childLogger.info("Stopping gateway...");
                 try {
                     ws?.close();
@@ -310,8 +334,6 @@ export const hedgehogFinancePlugin = {
                 });
                 resolveStop();
             };
-            // [事件处理分离]：抽离出独立的 async 消息处理器
-            // channel.ts 中的 handleInboundMessage
             const handleInboundMessage = async (data) => {
                 ctx.setStatus({
                     ...ctx.getStatus(),
@@ -319,14 +341,10 @@ export const hedgehogFinancePlugin = {
                 });
                 try {
                     const appPayload = JSON.parse(data.toString());
-                    // ==========================================
-                    // 【新增】手动识别并拦截 RPC 请求 (type: "req")
-                    // ==========================================
                     if (appPayload.type === "req") {
                         const { id, method, params } = appPayload;
                         if (!method)
                             return;
-                        // 从中央工具注册表中查找方法
                         if (method === "ping") {
                             if (ws?.readyState === WebSocket.OPEN) {
                                 ws.send(JSON.stringify({
@@ -342,15 +360,12 @@ export const hedgehogFinancePlugin = {
                         if (tool && typeof tool.execute === 'function') {
                             childLogger.debug({ method }, "拦截到 RPC 请求");
                             try {
-                                // 直接使用websocket中的 accountId 作为绝对安全的 userId。
                                 const runContext = {
                                     userId: accountId,
                                     runtime: rt
                                 };
-                                // 执行业务逻辑：传入业务参数 (params) 和安全上下文 (runContext)
                                 const resultStr = await tool.execute(params, runContext);
                                 const resultObj = JSON.parse(resultStr);
-                                // 按照 OpenClaw 官方 res 协议手动回包（成功状态）
                                 if (ws?.readyState === WebSocket.OPEN) {
                                     ws.send(JSON.stringify({
                                         type: "res",
@@ -362,7 +377,6 @@ export const hedgehogFinancePlugin = {
                             }
                             catch (err) {
                                 childLogger.error({ err: err.message, method }, "RPC 执行失败");
-                                // 按照 OpenClaw 官方 res 协议手动回包（失败状态）
                                 if (ws?.readyState === WebSocket.OPEN) {
                                     ws.send(JSON.stringify({
                                         type: "res",
@@ -441,6 +455,7 @@ export const hedgehogFinancePlugin = {
                         }
                     };
                     const normalizeId = (rawId) => rawId?.replace(/^(command:|tool:|call_)/, '');
+                    const replyRunId = `hedgehog:${chatId}:${id}`;
                     let hasSentModelEvent = false;
                     const sendModelEvent = (payload) => {
                         if (!payload.provider && !payload.model)
@@ -450,6 +465,82 @@ export const hedgehogFinancePlugin = {
                         hasSentModelEvent = true;
                         sendEvent("model", payload);
                     };
+                    const enrichToolItemPayload = (payload) => {
+                        const itemId = normalizeId(typeof payload.itemId === "string" ? payload.itemId : undefined) ||
+                            (typeof payload.itemId === "string" ? payload.itemId : undefined) ||
+                            `temp_${String(payload.kind || "item")}_${String(payload.title || payload.name || "unnamed")}`;
+                        const toolCallId = normalizeId(typeof payload.toolCallId === "string" ? payload.toolCallId : undefined) || itemId;
+                        const argumentsPayload = toolArgumentsMap.get(toolCallId) || toolArgumentsMap.get(itemId);
+                        const argumentDisplay = resolveArgumentDisplay(argumentsPayload);
+                        const enrichedPayload = argumentDisplay
+                            ? { ...payload, arguments: argumentsPayload, title: `${payload.name || payload.kind || "tool"} ${argumentDisplay}`, meta: argumentDisplay }
+                            : argumentsPayload ? { ...payload, arguments: argumentsPayload } : payload;
+                        return { ...enrichedPayload, itemId, toolCallId };
+                    };
+                    const releaseToolArguments = (payload) => {
+                        if (payload.status !== "completed" && payload.status !== "failed" && payload.status !== "blocked")
+                            return;
+                        const itemId = normalizeId(typeof payload.itemId === "string" ? payload.itemId : undefined);
+                        const toolCallId = normalizeId(typeof payload.toolCallId === "string" ? payload.toolCallId : undefined);
+                        if (itemId)
+                            toolArgumentsMap.delete(itemId);
+                        if (toolCallId)
+                            toolArgumentsMap.delete(toolCallId);
+                    };
+                    const agentEventUnsubscribe = rt.events.onAgentEvent((evt) => {
+                        if (evt.runId !== replyRunId)
+                            return;
+                        const data = evt.data || {};
+                        if (evt.stream === "tool") {
+                            if (!shouldDisplayToolProgress(data.name))
+                                return;
+                            const toolCallId = normalizeId(typeof data.toolCallId === "string" ? data.toolCallId : undefined);
+                            const args = data.args && typeof data.args === "object" && !Array.isArray(data.args)
+                                ? data.args
+                                : undefined;
+                            if (toolCallId && args) {
+                                toolArgumentsMap.set(toolCallId, args);
+                                toolArgumentsMap.set(`tool:${toolCallId}`, args);
+                                toolArgumentsMap.set(`command:${toolCallId}`, args);
+                            }
+                            const eventArgs = args || (toolCallId ? toolArgumentsMap.get(toolCallId) : undefined);
+                            sendEvent("tool_event", {
+                                phase: data.phase,
+                                name: data.name,
+                                toolCallId: toolCallId || data.toolCallId,
+                                arguments: eventArgs,
+                                meta: data.meta,
+                                isError: data.isError,
+                            });
+                            return;
+                        }
+                        if (evt.stream === "item") {
+                            if (!shouldDisplayToolProgress(data.name))
+                                return;
+                            if (data.kind === "tool" && (data.name === "exec" || data.name === "bash"))
+                                return;
+                            const enrichedPayload = enrichToolItemPayload(data);
+                            sendEvent("item_event", enrichedPayload);
+                            releaseToolArguments(data);
+                            return;
+                        }
+                        if (evt.stream === "command_output") {
+                            const itemId = normalizeId(typeof data.itemId === "string" ? data.itemId :
+                                typeof data.toolCallId === "string" ? data.toolCallId : "global") || "global";
+                            const last = commandOutputMap.get(itemId) || "";
+                            const output = typeof data.output === "string" ? data.output : "";
+                            const full = data.phase === "delta" || data.phase === "update" ? last + output : output;
+                            commandOutputMap.set(itemId, full);
+                            if (output || data.exitCode !== undefined || data.status === "completed") {
+                                sendEvent("command_output", { ...data, output: full, itemId, toolCallId: itemId });
+                            }
+                            return;
+                        }
+                        if (evt.stream === "patch") {
+                            const itemId = normalizeId(typeof data.itemId === "string" ? data.itemId : undefined) || "patch";
+                            sendEvent("patch_summary", { ...data, itemId, toolCallId: itemId });
+                        }
+                    });
                     const sendFinalReplyAndUsage = async () => {
                         const durationMs = Date.now() - startTime;
                         if (ws?.readyState !== WebSocket.OPEN)
@@ -498,6 +589,7 @@ export const hedgehogFinancePlugin = {
                         }));
                     };
                     const replyOpts = {
+                        runId: replyRunId,
                         verboseLevel: 'full',
                         shouldEmitToolResult: true,
                         shouldEmitToolOutput: true,
@@ -528,22 +620,8 @@ export const hedgehogFinancePlugin = {
                         onModelSelected: (payload) => {
                             sendModelEvent(payload);
                         },
-                        onItemEvent: (payload) => {
-                            const rawId = payload.itemId || payload.toolCallId || `temp_${payload.kind || 'item'}_${payload.title || payload.name || 'unnamed'}`;
-                            const itemId = normalizeId(rawId);
-                            sendEvent("item_event", { ...payload, itemId, toolCallId: itemId });
-                        },
-                        onCommandOutput: (payload) => {
-                            const itemId = normalizeId(payload.itemId || payload.toolCallId || 'global');
-                            const last = commandOutputMap.get(itemId) || "";
-                            const full = payload.phase === 'delta' ? (last + (payload.output || "")) : (payload.output || "");
-                            commandOutputMap.set(itemId, full);
-                            if (payload.output || payload.exitCode !== undefined || payload.status === 'completed') {
-                                sendEvent("command_output", { ...payload, output: full, itemId });
-                            }
-                        }
                     };
-                    // 1. 显式类型化的配置 (保证观测开启)
+                    // Relay clients depend on verbose stream events for tool progress.
                     const finalCfg = {
                         ...cfg,
                         agents: {
@@ -554,17 +632,14 @@ export const hedgehogFinancePlugin = {
                             }
                         }
                     };
-                    // 3. 准备回复选项
                     const finalReplyOpts = { ...replyOpts };
                     try {
-                        // 4. 执行稳定分发
                         await rt.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
                             cfg: finalCfg,
                             ctx: context,
                             replyOptions: finalReplyOpts,
                             dispatcherOptions: {
                                 deliver: async (payload, info) => {
-                                    // 原有的兜底逻辑保持不变
                                     const cd = payload.channelData;
                                     if (cd && (cd.toolCallId || cd.itemId)) {
                                         sendEvent("tool_result", {
@@ -578,6 +653,7 @@ export const hedgehogFinancePlugin = {
                         await sendFinalReplyAndUsage();
                     }
                     finally {
+                        agentEventUnsubscribe();
                         delete sentLengthMap[chatId];
                         delete reasoningLengthMap[chatId];
                     }
@@ -608,7 +684,6 @@ export const hedgehogFinancePlugin = {
                         }
                     }, 30000);
                 });
-                // 绑定消息处理
                 ws.on("message", handleInboundMessage);
                 ws.on("error", (err) => {
                     childLogger.error({ err: err.message }, "WebSocket error");
@@ -620,7 +695,7 @@ export const hedgehogFinancePlugin = {
                 ws.on("close", (closeCode, reason) => {
                     if (heartbeatInterval)
                         clearInterval(heartbeatInterval);
-                    clearStreamStates(); // [生命周期管理]：断开时清理状态
+                    clearStreamStates();
                     if (!isClosing) {
                         const retryDelay = 5000 + Math.random() * 5000;
                         childLogger.warn({ closeCode, retryDelay: Math.round(retryDelay / 1000) }, "Connection dropped. Retrying...");

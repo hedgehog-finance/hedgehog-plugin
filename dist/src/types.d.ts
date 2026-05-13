@@ -1,7 +1,4 @@
 import { z } from "zod";
-/**
- * Hedgehog Finance Resolved Account
- */
 export interface HedgehogFinanceResolvedAccount {
     accountId: string;
     config: {
@@ -11,9 +8,6 @@ export interface HedgehogFinanceResolvedAccount {
     enabled: boolean;
     configured: boolean;
 }
-/**
- * Inbound Message from Relay (Manual Handling)
- */
 export interface RelayInboundMessage {
     type: "req" | "reply" | "item_event" | "usage" | "model" | "reasoning";
     from: string;
@@ -24,9 +18,6 @@ export interface RelayInboundMessage {
     params?: any;
     replyTo?: string;
 }
-/**
- * Session entry structure in sessions.json
- */
 export interface OpenClawSessionEntry {
     sessionId: string;
     inputTokens?: number;
@@ -38,9 +29,6 @@ export interface OpenClawSessionEntry {
     modelProvider?: string;
     updatedAt?: number;
 }
-/**
- * Normalized Usage for UI and Internal logic
- */
 export interface TurnUsage {
     input: number;
     output: number;
@@ -50,9 +38,6 @@ export interface TurnUsage {
     model: string;
     provider: string;
 }
-/**
- * Stock Classification Result (AI Schema)
- */
 export declare const StockClassificationSchema: z.ZodObject<{
     industry: z.ZodObject<{
         name: z.ZodString;

@@ -21,25 +21,16 @@ import { allFeaturesTools } from "./features/index.js";
 
 
 
-/**
- * Unix timestamp
- */
 function getCurrentTimestamp(): number {
 	return Date.now();
 }
 
-/**
- * 获取 OpenClaw state 目录
- */
 function getStateDir(): string {
 	return process.env.OPENCLAW_STATE_DIR ||
 		process.env.CLAWD_STATE_DIR ||
 		path.join(os.homedir(), ".openclaw");
 }
 
-/**
- * [修改] 异步从 sessions.json 获取 session entry
- */
 async function getSessionEntryAsync(agentId: string, sessionKey: string) {
 	try {
 		const stateDir = getStateDir();
@@ -108,9 +99,48 @@ function normalizeUsageSnapshot(usageRaw: any) {
 	};
 }
 
-/**
- * [修改] 异步获取 .jsonl 文件的当前行数
- */
+function formatArgumentValue(value: unknown): string | undefined {
+	if (typeof value === "string") {
+		const firstLine = value.trim().split(/\r?\n/)[0]?.trim();
+		if (!firstLine) return;
+		return firstLine.length > 240 ? `${firstLine.slice(0, 237)}...` : firstLine;
+	}
+	if (typeof value === "number" && Number.isFinite(value)) return String(value);
+	if (typeof value === "boolean") return value ? "true" : "false";
+	if (Array.isArray(value)) {
+		const formatted = value.map(formatArgumentValue).filter(Boolean);
+		if (!formatted.length) return;
+		const preview = formatted.slice(0, 3).join(", ");
+		return formatted.length > 3 ? `${preview}, ...` : preview;
+	}
+	return undefined;
+}
+
+function resolveArgumentDisplay(args?: Record<string, unknown>): string | undefined {
+	if (!args) return;
+	const preferredKeys = ["command", "path", "file_path", "filePath", "url", "query", "action"];
+	for (const key of preferredKeys) {
+		const value = formatArgumentValue(args[key]);
+		if (value) return value;
+	}
+	for (const [key, rawValue] of Object.entries(args)) {
+		const value = formatArgumentValue(rawValue);
+		if (value) return `${key} ${value}`;
+	}
+}
+
+function shouldDisplayToolProgress(name: unknown): boolean {
+	if (typeof name !== "string") return true;
+	return !new Set([
+		"session_status",
+		"heartbeat_respond",
+		"heartbeat_response",
+		"tool_call",
+		"tool_call_update",
+		"update_plan",
+	]).has(name);
+}
+
 async function getJsonlLineCountAsync(agentId: string, sessionId: string): Promise<number> {
 	try {
 		const stateDir = getStateDir();
@@ -127,9 +157,6 @@ async function getJsonlLineCountAsync(agentId: string, sessionId: string): Promi
 	}
 }
 
-/**
- * [修改] 异步从 .jsonl session 文件读取指定行号之后的第一条 assistant 消息的 usage
- */
 async function readUsageFromJsonlAsync(agentId: string, sessionId: string, afterLine: number) {
 	try {
 		const stateDir = getStateDir();
@@ -142,7 +169,6 @@ async function readUsageFromJsonlAsync(agentId: string, sessionId: string, after
 		const content = await fsAsync.readFile(jsonlPath, "utf-8");
 		const lines = content.trim().split("\n").filter(Boolean);
 
-		// 从 afterLine 开始向后找第一条 assistant 消息
 		for (let i = afterLine; i < lines.length; i++) {
 			try {
 				const entry = JSON.parse(lines[i]);
@@ -167,9 +193,6 @@ async function readUsageFromJsonlAsync(agentId: string, sessionId: string, after
 }
 
 
-/**
- * [修改] 异步获取本轮对话的 token 用量
- */
 async function getCurrentTurnUsageAsync(
 	agentId: string,
 	sessionKey: string,
@@ -178,7 +201,6 @@ async function getCurrentTurnUsageAsync(
 	maxRetries: number = 60,
 	retryDelayMs: number = 100
 ) {
-	// 第一阶段：尝试从 sessions.json 读取
 	for (let attempt = 0; attempt < 40; attempt++) {
 		if (attempt > 0) {
 			await new Promise(r => setTimeout(r, retryDelayMs));
@@ -200,7 +222,6 @@ async function getCurrentTurnUsageAsync(
 		}
 	}
 
-	// 第二阶段：Fallback 到 .jsonl 文件
 	const entry = await getSessionEntryAsync(agentId, sessionKey);
 	const sessionId = entry?.sessionId || sessionIdBefore;
 
@@ -234,9 +255,6 @@ async function getCurrentTurnUsageAsync(
 	return null;
 }
 
-/**
- * Hedgehog Finance Channel Plugin
- */
 export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount> = {
 	id: "hedgehog_finance",
 
@@ -332,15 +350,16 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 			let isClosing = false;
 			let heartbeatInterval: NodeJS.Timeout | null = null;
 
-			// [状态管理分离]
 			const sentLengthMap: Record<string, number> = {};
 			const reasoningLengthMap: Record<string, number> = {};
-			const commandOutputMap = new Map<string, string>(); // [新增] 命令输出缓存: itemId -> fullOutput
+			const commandOutputMap = new Map<string, string>();
+			const toolArgumentsMap = new Map<string, Record<string, unknown>>();
 
 			const clearStreamStates = () => {
 				Object.keys(sentLengthMap).forEach(k => delete sentLengthMap[k]);
 				Object.keys(reasoningLengthMap).forEach(k => delete reasoningLengthMap[k]);
 				commandOutputMap.clear();
+				toolArgumentsMap.clear();
 			};
 
 			let resolveStop: (value: void | PromiseLike<void>) => void;
@@ -353,7 +372,7 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 				isClosing = true;
 
 				if (heartbeatInterval) clearInterval(heartbeatInterval);
-				clearStreamStates(); // [生命周期管理]：清理内存状态
+				clearStreamStates();
 
 				childLogger.info("Stopping gateway...");
 
@@ -372,9 +391,6 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 				resolveStop();
 			};
 
-			// [事件处理分离]：抽离出独立的 async 消息处理器
-
-			// channel.ts 中的 handleInboundMessage
 			const handleInboundMessage = async (data: RawData) => {
 				ctx.setStatus({
 					...ctx.getStatus(),
@@ -383,15 +399,11 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 
 				try {
 					const appPayload: RelayInboundMessage = JSON.parse(data.toString());
-					// ==========================================
-					// 【新增】手动识别并拦截 RPC 请求 (type: "req")
-					// ==========================================
 					if (appPayload.type === "req") {
 						const { id, method, params } = appPayload;
 
 						if (!method) return;
 
-						// 从中央工具注册表中查找方法
 						if (method === "ping") {
 							if (ws?.readyState === WebSocket.OPEN) {
 								ws.send(JSON.stringify({
@@ -410,17 +422,14 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 							childLogger.debug({ method }, "拦截到 RPC 请求");
 
 							try {
-								// 直接使用websocket中的 accountId 作为绝对安全的 userId。
 								const runContext = {
 									userId: accountId,
 									runtime: rt
 								};
 
-								// 执行业务逻辑：传入业务参数 (params) 和安全上下文 (runContext)
 								const resultStr = await tool.execute(params, runContext);
 								const resultObj = JSON.parse(resultStr);
 
-								// 按照 OpenClaw 官方 res 协议手动回包（成功状态）
 								if (ws?.readyState === WebSocket.OPEN) {
 									ws.send(JSON.stringify({
 										type: "res",
@@ -432,7 +441,6 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 							} catch (err: any) {
 								childLogger.error({ err: err.message, method }, "RPC 执行失败");
 
-								// 按照 OpenClaw 官方 res 协议手动回包（失败状态）
 								if (ws?.readyState === WebSocket.OPEN) {
 									ws.send(JSON.stringify({
 										type: "res",
@@ -522,6 +530,7 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 
 
 					const normalizeId = (rawId?: string) => rawId?.replace(/^(command:|tool:|call_)/, '');
+					const replyRunId = `hedgehog:${chatId}:${id}`;
 					let hasSentModelEvent = false;
 
 					const sendModelEvent = (payload: { provider?: string; model?: string; thinkLevel?: string }) => {
@@ -530,6 +539,80 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 						hasSentModelEvent = true;
 						sendEvent("model", payload);
 					};
+
+					const enrichToolItemPayload = (payload: Record<string, unknown>) => {
+						const itemId = normalizeId(typeof payload.itemId === "string" ? payload.itemId : undefined) ||
+							(typeof payload.itemId === "string" ? payload.itemId : undefined) ||
+							`temp_${String(payload.kind || "item")}_${String(payload.title || payload.name || "unnamed")}`;
+						const toolCallId = normalizeId(typeof payload.toolCallId === "string" ? payload.toolCallId : undefined) || itemId;
+						const argumentsPayload = toolArgumentsMap.get(toolCallId) || toolArgumentsMap.get(itemId);
+						const argumentDisplay = resolveArgumentDisplay(argumentsPayload);
+						const enrichedPayload = argumentDisplay
+							? { ...payload, arguments: argumentsPayload, title: `${payload.name || payload.kind || "tool"} ${argumentDisplay}`, meta: argumentDisplay }
+							: argumentsPayload ? { ...payload, arguments: argumentsPayload } : payload;
+						return { ...enrichedPayload, itemId, toolCallId };
+					};
+
+					const releaseToolArguments = (payload: Record<string, unknown>) => {
+						if (payload.status !== "completed" && payload.status !== "failed" && payload.status !== "blocked") return;
+						const itemId = normalizeId(typeof payload.itemId === "string" ? payload.itemId : undefined);
+						const toolCallId = normalizeId(typeof payload.toolCallId === "string" ? payload.toolCallId : undefined);
+						if (itemId) toolArgumentsMap.delete(itemId);
+						if (toolCallId) toolArgumentsMap.delete(toolCallId);
+					};
+
+					const agentEventUnsubscribe = rt.events.onAgentEvent((evt: { runId?: string; stream?: string; data?: Record<string, unknown> }) => {
+						if (evt.runId !== replyRunId) return;
+						const data = evt.data || {};
+						if (evt.stream === "tool") {
+							if (!shouldDisplayToolProgress(data.name)) return;
+							const toolCallId = normalizeId(typeof data.toolCallId === "string" ? data.toolCallId : undefined);
+							const args = data.args && typeof data.args === "object" && !Array.isArray(data.args)
+								? data.args as Record<string, unknown>
+								: undefined;
+							if (toolCallId && args) {
+								toolArgumentsMap.set(toolCallId, args);
+								toolArgumentsMap.set(`tool:${toolCallId}`, args);
+								toolArgumentsMap.set(`command:${toolCallId}`, args);
+							}
+							const eventArgs = args || (toolCallId ? toolArgumentsMap.get(toolCallId) : undefined);
+							sendEvent("tool_event", {
+								phase: data.phase,
+								name: data.name,
+								toolCallId: toolCallId || data.toolCallId,
+								arguments: eventArgs,
+								meta: data.meta,
+								isError: data.isError,
+							});
+							return;
+						}
+						if (evt.stream === "item") {
+							if (!shouldDisplayToolProgress(data.name)) return;
+							if (data.kind === "tool" && (data.name === "exec" || data.name === "bash")) return;
+							const enrichedPayload = enrichToolItemPayload(data);
+							sendEvent("item_event", enrichedPayload);
+							releaseToolArguments(data);
+							return;
+						}
+						if (evt.stream === "command_output") {
+							const itemId = normalizeId(
+								typeof data.itemId === "string" ? data.itemId :
+									typeof data.toolCallId === "string" ? data.toolCallId : "global"
+							) || "global";
+							const last = commandOutputMap.get(itemId) || "";
+							const output = typeof data.output === "string" ? data.output : "";
+							const full = data.phase === "delta" || data.phase === "update" ? last + output : output;
+							commandOutputMap.set(itemId, full);
+							if (output || data.exitCode !== undefined || data.status === "completed") {
+								sendEvent("command_output", { ...data, output: full, itemId, toolCallId: itemId });
+							}
+							return;
+						}
+						if (evt.stream === "patch") {
+							const itemId = normalizeId(typeof data.itemId === "string" ? data.itemId : undefined) || "patch";
+							sendEvent("patch_summary", { ...data, itemId, toolCallId: itemId });
+						}
+					});
 
 					const sendFinalReplyAndUsage = async () => {
 						const durationMs = Date.now() - startTime;
@@ -588,6 +671,7 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 					};
 
 					const replyOpts = {
+						runId: replyRunId,
 						verboseLevel: 'full',
 						shouldEmitToolResult: true,
 						shouldEmitToolOutput: true,
@@ -616,22 +700,8 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 						onModelSelected: (payload: { provider?: string; model?: string; thinkLevel?: string }) => {
 							sendModelEvent(payload);
 						},
-						onItemEvent: (payload: { itemId?: string; toolCallId?: string; kind?: string; title?: string; name?: string; status?: string; summary?: string }) => {
-							const rawId = payload.itemId || payload.toolCallId || `temp_${payload.kind || 'item'}_${payload.title || payload.name || 'unnamed'}`;
-							const itemId = normalizeId(rawId);
-							sendEvent("item_event", { ...payload, itemId, toolCallId: itemId });
-						},
-						onCommandOutput: (payload: { itemId?: string; toolCallId?: string; phase?: string; output?: string; exitCode?: number | null; status?: string }) => {
-							const itemId = normalizeId(payload.itemId || payload.toolCallId || 'global')!;
-							const last = commandOutputMap.get(itemId) || "";
-							const full = payload.phase === 'delta' ? (last + (payload.output || "")) : (payload.output || "");
-							commandOutputMap.set(itemId, full);
-							if (payload.output || payload.exitCode !== undefined || payload.status === 'completed') {
-								sendEvent("command_output", { ...payload, output: full, itemId });
-							}
-						}
 					};
-					// 1. 显式类型化的配置 (保证观测开启)
+					// Relay clients depend on verbose stream events for tool progress.
 					const finalCfg: OpenClawConfig = {
 						...cfg,
 						agents: {
@@ -643,22 +713,18 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 						}
 					};
 
-					// 2. 类型推导 (保证不瞎搞类型)
 					type DispatchParams = Parameters<typeof rt.channel.reply.dispatchReplyWithBufferedBlockDispatcher>[0];
 					type RawReplyOptions = NonNullable<DispatchParams["replyOptions"]>;
 
-					// 3. 准备回复选项
 					const finalReplyOpts = { ...replyOpts } as RawReplyOptions;
 
 					try {
-						// 4. 执行稳定分发
 						await rt.channel.reply.dispatchReplyWithBufferedBlockDispatcher({
 							cfg: finalCfg,
 							ctx: context,
 							replyOptions: finalReplyOpts,
 							dispatcherOptions: {
 								deliver: async (payload, info) => {
-									// 原有的兜底逻辑保持不变
 									const cd = payload.channelData;
 									if (cd && (cd.toolCallId || cd.itemId)) {
 										sendEvent("tool_result", {
@@ -671,6 +737,7 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 						});
 						await sendFinalReplyAndUsage();
 					} finally {
+						agentEventUnsubscribe();
 						delete sentLengthMap[chatId];
 						delete reasoningLengthMap[chatId];
 					}
@@ -703,7 +770,6 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 					}, 30000);
 				});
 
-				// 绑定消息处理
 				ws.on("message", handleInboundMessage);
 
 				ws.on("error", (err) => {
@@ -716,7 +782,7 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 
 				ws.on("close", (closeCode, reason) => {
 					if (heartbeatInterval) clearInterval(heartbeatInterval);
-					clearStreamStates(); // [生命周期管理]：断开时清理状态
+					clearStreamStates();
 
 					if (!isClosing) {
 						const retryDelay = 5000 + Math.random() * 5000;

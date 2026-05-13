@@ -36,9 +36,6 @@ function enqueueWatchlistMutation<T>(task: () => Promise<T>): Promise<T> {
 		.finally(release);
 }
 
-/**
- * 辅助函数：统一处理归一化分类项
- */
 function normalizeTags(input: { name: string; weight?: number } | { name: string; weight?: number }[] | null | undefined): { name: string, weight: number }[] {
 	if (!input) return [];
 	const items = Array.isArray(input) ? input : [input];
@@ -58,9 +55,6 @@ function watchlistStockKey(stock: AddToWatchlistParams): string {
 	return `${watchlistLogic._normalizeStockCodeForCache(stock.stockCode, stock.exchange)}:${stock.exchange}`;
 }
 
-/**
- * 辅助函数：更新股票的分类标签
- */
 function updateWatchlistTags(
 	db: DatabaseSync,
 	watchlistId: string,

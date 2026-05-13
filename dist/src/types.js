@@ -1,7 +1,4 @@
 import { z } from "zod";
-/**
- * Stock Classification Result (AI Schema)
- */
 export const StockClassificationSchema = z.object({
     industry: z.object({
         name: z.string(),
