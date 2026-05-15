@@ -179,7 +179,8 @@ export const watchlistLogic = {
                     weight: 50
                 });
             }
-            catch { }
+            catch (e) {
+            }
         }
         const classification = await watchlistLogic._autoClassifyWithAI(rt, stockName, stockCode, exchange);
         return classification;
@@ -204,7 +205,8 @@ export const watchlistLogic = {
                     });
                     return;
                 }
-                catch { }
+                catch {
+                }
             }
             pendingStocks.push({
                 idx,

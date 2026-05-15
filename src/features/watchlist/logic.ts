@@ -220,7 +220,8 @@ export const watchlistLogic = {
 					theme: JSON.parse(cached.themeJson || '[]'),
 					weight: 50
 				});
-			} catch {}
+			} catch (e) {
+			}
 		}
 
 		const classification = await watchlistLogic._autoClassifyWithAI(rt, stockName, stockCode, exchange);
@@ -253,7 +254,8 @@ export const watchlistLogic = {
 						weight: 50
 					});
 					return;
-				} catch {}
+				} catch {
+				}
 			}
 
 			pendingStocks.push({

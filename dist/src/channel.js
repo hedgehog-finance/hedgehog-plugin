@@ -4,6 +4,7 @@ import * as fsAsync from "node:fs/promises";
 import * as path from "node:path";
 import { WebSocket } from "ws";
 import { emptyChannelConfigSchema } from "openclaw/plugin-sdk/core";
+import { isReasoningReplyPayload } from "openclaw/plugin-sdk/reply-payload";
 import { getHedgehogRuntime } from "./runtime.js";
 import { logger } from "./core/logger.js";
 import { allFeaturesTools } from "./features/index.js";
@@ -77,52 +78,57 @@ function normalizeUsageSnapshot(usageRaw) {
         cost: cost || 0,
     };
 }
-function formatArgumentValue(value) {
-    if (typeof value === "string") {
-        const firstLine = value.trim().split(/\r?\n/)[0]?.trim();
-        if (!firstLine)
-            return;
-        return firstLine.length > 240 ? `${firstLine.slice(0, 237)}...` : firstLine;
-    }
-    if (typeof value === "number" && Number.isFinite(value))
-        return String(value);
-    if (typeof value === "boolean")
-        return value ? "true" : "false";
-    if (Array.isArray(value)) {
-        const formatted = value.map(formatArgumentValue).filter(Boolean);
-        if (!formatted.length)
-            return;
-        const preview = formatted.slice(0, 3).join(", ");
-        return formatted.length > 3 ? `${preview}, ...` : preview;
-    }
-    return undefined;
+const THINKING_TAG_NAME = String.raw `(?:(?:antml:)?(?:think(?:ing)?|thought)|antthinking)`;
+function stripThinkingTaggedText(text) {
+    const completeThinkingTag = new RegExp(String.raw `<\s*${THINKING_TAG_NAME}\s*>[\s\S]*?<\s*\/\s*${THINKING_TAG_NAME}\s*>`, "gi");
+    const danglingThinkingTag = new RegExp(String.raw `<\s*${THINKING_TAG_NAME}\s*>[\s\S]*$`, "i");
+    return text
+        .replace(completeThinkingTag, "")
+        .replace(danglingThinkingTag, "");
 }
-function resolveArgumentDisplay(args) {
-    if (!args)
-        return;
-    const preferredKeys = ["command", "path", "file_path", "filePath", "url", "query", "action"];
-    for (const key of preferredKeys) {
-        const value = formatArgumentValue(args[key]);
-        if (value)
-            return value;
+function extractThinkingTaggedText(text) {
+    const completeThinkingTag = new RegExp(String.raw `<\s*${THINKING_TAG_NAME}\s*>([\s\S]*?)<\s*\/\s*${THINKING_TAG_NAME}\s*>`, "gi");
+    const parts = [];
+    for (const match of text.matchAll(completeThinkingTag)) {
+        const thinking = match[1]?.trim();
+        if (thinking)
+            parts.push(thinking);
     }
-    for (const [key, rawValue] of Object.entries(args)) {
-        const value = formatArgumentValue(rawValue);
-        if (value)
-            return `${key} ${value}`;
-    }
+    return parts.join("\n").trim();
 }
-function shouldDisplayToolProgress(name) {
-    if (typeof name !== "string")
+function extractVisibleReplyText(rawText) {
+    let text = stripThinkingTaggedText(rawText);
+    const finalOpen = /<\s*final\s*>/i.exec(text);
+    if (finalOpen) {
+        text = text.slice((finalOpen.index || 0) + finalOpen[0].length);
+    }
+    const finalClose = /<\s*\/\s*final\s*>/i.exec(text);
+    if (finalClose) {
+        text = text.slice(0, finalClose.index);
+    }
+    return text
+        .replace(/<\s*\/?\s*final\s*>/gi, "")
+        .replace(/^\s+/, "");
+}
+function buildReplyTextDelta(state, rawText, replace) {
+    const visibleText = extractVisibleReplyText(rawText);
+    if (!visibleText)
+        return "";
+    if (state.text && !visibleText.startsWith(state.text)) {
+        const delta = visibleText === state.text ? "" : visibleText;
+        state.text = visibleText;
+        return delta;
+    }
+    const delta = visibleText.slice(state.text.length);
+    state.text = visibleText;
+    return delta;
+}
+function isReasoningPayload(payload, info) {
+    if (info?.isReasoning === true)
         return true;
-    return !new Set([
-        "session_status",
-        "heartbeat_respond",
-        "heartbeat_response",
-        "tool_call",
-        "tool_call_update",
-        "update_plan",
-    ]).has(name);
+    if (!payload || typeof payload !== "object")
+        return false;
+    return isReasoningReplyPayload(payload);
 }
 async function getJsonlLineCountAsync(agentId, sessionId) {
     try {
@@ -235,7 +241,7 @@ export const hedgehogFinancePlugin = {
         media: false,
         reactions: false,
         threads: false,
-        blockStreaming: false,
+        blockStreaming: true,
     },
     config: {
         listAccountIds: (cfg) => {
@@ -299,15 +305,17 @@ export const hedgehogFinancePlugin = {
             let ws = null;
             let isClosing = false;
             let heartbeatInterval = null;
-            const sentLengthMap = {};
+            const replyTextStateMap = {};
             const reasoningLengthMap = {};
+            const taggedThinkingStateMap = {};
             const commandOutputMap = new Map();
-            const toolArgumentsMap = new Map();
+            const toolArgsMap = new Map();
             const clearStreamStates = () => {
-                Object.keys(sentLengthMap).forEach(k => delete sentLengthMap[k]);
+                Object.keys(replyTextStateMap).forEach(k => delete replyTextStateMap[k]);
                 Object.keys(reasoningLengthMap).forEach(k => delete reasoningLengthMap[k]);
+                Object.keys(taggedThinkingStateMap).forEach(k => delete taggedThinkingStateMap[k]);
                 commandOutputMap.clear();
-                toolArgumentsMap.clear();
+                toolArgsMap.clear();
             };
             let resolveStop;
             const stopPromise = new Promise((resolve) => {
@@ -454,8 +462,58 @@ export const hedgehogFinancePlugin = {
                             }));
                         }
                     };
+                    const sendReasoningText = (text) => {
+                        if (!text)
+                            return;
+                        const prev = reasoningLengthMap[chatId] || 0;
+                        const delta = text.slice(prev);
+                        reasoningLengthMap[chatId] = text.length;
+                        if (delta)
+                            sendEvent("reasoning", { text: delta });
+                    };
+                    const sendReasoningDelta = (text) => {
+                        if (!text)
+                            return;
+                        reasoningLengthMap[chatId] = (reasoningLengthMap[chatId] || 0) + text.length;
+                        sendEvent("reasoning", { text });
+                    };
+                    const sendTaggedThinkingText = (rawText) => {
+                        const thinkingText = extractThinkingTaggedText(rawText);
+                        if (!thinkingText)
+                            return;
+                        const state = taggedThinkingStateMap[chatId] ||= { text: "" };
+                        const delta = state.text && thinkingText.startsWith(state.text)
+                            ? thinkingText.slice(state.text.length)
+                            : thinkingText;
+                        state.text = thinkingText;
+                        if (delta)
+                            sendEvent("reasoning", { text: delta });
+                    };
+                    const sendReplyText = (payload) => {
+                        const rawText = typeof payload.text === "string" ? payload.text : typeof payload.delta === "string" ? payload.delta : "";
+                        if (!rawText)
+                            return;
+                        sendTaggedThinkingText(rawText);
+                        const state = replyTextStateMap[chatId] ||= { text: "" };
+                        if (payload.replace) {
+                            const visibleText = extractVisibleReplyText(rawText);
+                            if (!visibleText)
+                                return;
+                            state.text = visibleText;
+                            sendEvent("reply", { text: visibleText, isPartial: true, replace: true });
+                            return;
+                        }
+                        const delta = typeof payload.delta === "string" && !payload.replace
+                            ? extractVisibleReplyText(payload.delta)
+                            : buildReplyTextDelta(state, rawText, payload.replace);
+                        if (!delta)
+                            return;
+                        if (typeof payload.delta === "string" && !payload.replace) {
+                            state.text += delta;
+                        }
+                        sendEvent("reply", { text: delta, isPartial: true });
+                    };
                     const normalizeId = (rawId) => rawId?.replace(/^(command:|tool:|call_)/, '');
-                    const replyRunId = `hedgehog:${chatId}:${id}`;
                     let hasSentModelEvent = false;
                     const sendModelEvent = (payload) => {
                         if (!payload.provider && !payload.model)
@@ -465,82 +523,6 @@ export const hedgehogFinancePlugin = {
                         hasSentModelEvent = true;
                         sendEvent("model", payload);
                     };
-                    const enrichToolItemPayload = (payload) => {
-                        const itemId = normalizeId(typeof payload.itemId === "string" ? payload.itemId : undefined) ||
-                            (typeof payload.itemId === "string" ? payload.itemId : undefined) ||
-                            `temp_${String(payload.kind || "item")}_${String(payload.title || payload.name || "unnamed")}`;
-                        const toolCallId = normalizeId(typeof payload.toolCallId === "string" ? payload.toolCallId : undefined) || itemId;
-                        const argumentsPayload = toolArgumentsMap.get(toolCallId) || toolArgumentsMap.get(itemId);
-                        const argumentDisplay = resolveArgumentDisplay(argumentsPayload);
-                        const enrichedPayload = argumentDisplay
-                            ? { ...payload, arguments: argumentsPayload, title: `${payload.name || payload.kind || "tool"} ${argumentDisplay}`, meta: argumentDisplay }
-                            : argumentsPayload ? { ...payload, arguments: argumentsPayload } : payload;
-                        return { ...enrichedPayload, itemId, toolCallId };
-                    };
-                    const releaseToolArguments = (payload) => {
-                        if (payload.status !== "completed" && payload.status !== "failed" && payload.status !== "blocked")
-                            return;
-                        const itemId = normalizeId(typeof payload.itemId === "string" ? payload.itemId : undefined);
-                        const toolCallId = normalizeId(typeof payload.toolCallId === "string" ? payload.toolCallId : undefined);
-                        if (itemId)
-                            toolArgumentsMap.delete(itemId);
-                        if (toolCallId)
-                            toolArgumentsMap.delete(toolCallId);
-                    };
-                    const agentEventUnsubscribe = rt.events.onAgentEvent((evt) => {
-                        if (evt.runId !== replyRunId)
-                            return;
-                        const data = evt.data || {};
-                        if (evt.stream === "tool") {
-                            if (!shouldDisplayToolProgress(data.name))
-                                return;
-                            const toolCallId = normalizeId(typeof data.toolCallId === "string" ? data.toolCallId : undefined);
-                            const args = data.args && typeof data.args === "object" && !Array.isArray(data.args)
-                                ? data.args
-                                : undefined;
-                            if (toolCallId && args) {
-                                toolArgumentsMap.set(toolCallId, args);
-                                toolArgumentsMap.set(`tool:${toolCallId}`, args);
-                                toolArgumentsMap.set(`command:${toolCallId}`, args);
-                            }
-                            const eventArgs = args || (toolCallId ? toolArgumentsMap.get(toolCallId) : undefined);
-                            sendEvent("tool_event", {
-                                phase: data.phase,
-                                name: data.name,
-                                toolCallId: toolCallId || data.toolCallId,
-                                arguments: eventArgs,
-                                meta: data.meta,
-                                isError: data.isError,
-                            });
-                            return;
-                        }
-                        if (evt.stream === "item") {
-                            if (!shouldDisplayToolProgress(data.name))
-                                return;
-                            if (data.kind === "tool" && (data.name === "exec" || data.name === "bash"))
-                                return;
-                            const enrichedPayload = enrichToolItemPayload(data);
-                            sendEvent("item_event", enrichedPayload);
-                            releaseToolArguments(data);
-                            return;
-                        }
-                        if (evt.stream === "command_output") {
-                            const itemId = normalizeId(typeof data.itemId === "string" ? data.itemId :
-                                typeof data.toolCallId === "string" ? data.toolCallId : "global") || "global";
-                            const last = commandOutputMap.get(itemId) || "";
-                            const output = typeof data.output === "string" ? data.output : "";
-                            const full = data.phase === "delta" || data.phase === "update" ? last + output : output;
-                            commandOutputMap.set(itemId, full);
-                            if (output || data.exitCode !== undefined || data.status === "completed") {
-                                sendEvent("command_output", { ...data, output: full, itemId, toolCallId: itemId });
-                            }
-                            return;
-                        }
-                        if (evt.stream === "patch") {
-                            const itemId = normalizeId(typeof data.itemId === "string" ? data.itemId : undefined) || "patch";
-                            sendEvent("patch_summary", { ...data, itemId, toolCallId: itemId });
-                        }
-                    });
                     const sendFinalReplyAndUsage = async () => {
                         const durationMs = Date.now() - startTime;
                         if (ws?.readyState !== WebSocket.OPEN)
@@ -589,46 +571,92 @@ export const hedgehogFinancePlugin = {
                         }));
                     };
                     const replyOpts = {
-                        runId: replyRunId,
-                        verboseLevel: 'full',
-                        shouldEmitToolResult: true,
-                        shouldEmitToolOutput: true,
+                        suppressDefaultToolProgressMessages: true,
+                        disableBlockStreaming: false,
                         onPartialReply: (payload) => {
-                            if (payload.text) {
-                                const prev = sentLengthMap[chatId] || 0;
-                                const delta = payload.text.slice(prev);
-                                sentLengthMap[chatId] = payload.text.length;
-                                if (delta)
-                                    sendEvent("reply", { text: delta, isPartial: true });
+                            if (isReasoningPayload(payload)) {
+                                if (typeof payload.delta === "string")
+                                    sendReasoningDelta(payload.delta);
+                                else if (typeof payload.text === "string")
+                                    sendReasoningText(payload.text);
                             }
                         },
                         onReasoningStream: (payload) => {
                             if (payload.text) {
-                                const prev = reasoningLengthMap[chatId] || 0;
-                                const delta = payload.text.slice(prev);
-                                reasoningLengthMap[chatId] = payload.text.length;
-                                if (delta)
-                                    sendEvent("reasoning", { text: delta });
+                                sendReasoningText(payload.text);
                             }
                         },
                         onReasoningEnd: () => sendEvent("reasoning_end"),
                         onAssistantMessageStart: () => {
-                            sentLengthMap[chatId] = 0;
+                            replyTextStateMap[chatId] = { text: "" };
                             reasoningLengthMap[chatId] = 0;
+                            taggedThinkingStateMap[chatId] = { text: "" };
                             sendEvent("assistant_message_start");
                         },
                         onModelSelected: (payload) => {
                             sendModelEvent(payload);
                         },
+                        onToolStart: (payload) => {
+                            const rawId = payload.itemId || payload.toolCallId;
+                            const itemId = normalizeId(rawId || '');
+                            const hasArgs = Boolean(payload.args && Object.keys(payload.args).length > 0);
+                            if (!hasArgs && payload.phase !== "start") {
+                                return;
+                            }
+                            if (!itemId) {
+                                sendEvent("tool_start", payload);
+                                return;
+                            }
+                            toolArgsMap.set(itemId, { name: payload.name, args: payload.args });
+                            sendEvent("tool_start", { ...payload, itemId, toolCallId: itemId });
+                        },
+                        onItemEvent: (payload) => {
+                            const rawId = payload.itemId || payload.toolCallId;
+                            const itemId = normalizeId(rawId || `temp_${payload.kind || 'item'}_${payload.title || payload.name || 'unnamed'}`);
+                            const startedTool = itemId ? toolArgsMap.get(itemId) : undefined;
+                            const isCommandEvent = payload.kind === "command" || payload.name === "exec";
+                            sendEvent("item_event", {
+                                ...payload,
+                                name: payload.name || startedTool?.name,
+                                args: startedTool?.args,
+                                progressText: isCommandEvent ? undefined : payload.progressText,
+                                summary: isCommandEvent ? undefined : payload.summary,
+                                itemId,
+                                toolCallId: itemId,
+                            });
+                        },
+                        onCommandOutput: (payload) => {
+                            const itemId = normalizeId(payload.itemId || payload.toolCallId || 'global');
+                            const last = commandOutputMap.get(itemId) || "";
+                            const output = payload.output || "";
+                            const full = payload.phase === 'delta'
+                                ? (output.startsWith(last) ? output : last + output)
+                                : output;
+                            commandOutputMap.set(itemId, full);
+                            if (payload.output || payload.exitCode !== undefined || payload.status === 'completed') {
+                                sendEvent("command_output", { ...payload, output: full, itemId });
+                            }
+                        }
                     };
-                    // Relay clients depend on verbose stream events for tool progress.
                     const finalCfg = {
                         ...cfg,
                         agents: {
                             ...cfg.agents,
                             defaults: {
                                 ...(cfg.agents?.defaults || {}),
-                                verboseDefault: 'full'
+                                verboseDefault: 'off',
+                                blockStreamingDefault: 'on',
+                                blockStreamingBreak: 'text_end',
+                                blockStreamingChunk: {
+                                    minChars: 24,
+                                    maxChars: 160,
+                                    breakPreference: 'sentence',
+                                },
+                                blockStreamingCoalesce: {
+                                    minChars: 24,
+                                    maxChars: 160,
+                                    idleMs: 120,
+                                },
                             }
                         }
                     };
@@ -640,6 +668,13 @@ export const hedgehogFinancePlugin = {
                             replyOptions: finalReplyOpts,
                             dispatcherOptions: {
                                 deliver: async (payload, info) => {
+                                    if ((info.kind === "final" || info.kind === "block") && typeof payload.text === "string") {
+                                        if (isReasoningPayload(payload, info)) {
+                                            sendReasoningText(payload.text);
+                                            return;
+                                        }
+                                        sendReplyText({ text: payload.text, replace: true });
+                                    }
                                     const cd = payload.channelData;
                                     if (cd && (cd.toolCallId || cd.itemId)) {
                                         sendEvent("tool_result", {
@@ -653,9 +688,9 @@ export const hedgehogFinancePlugin = {
                         await sendFinalReplyAndUsage();
                     }
                     finally {
-                        agentEventUnsubscribe();
-                        delete sentLengthMap[chatId];
+                        delete replyTextStateMap[chatId];
                         delete reasoningLengthMap[chatId];
+                        delete taggedThinkingStateMap[chatId];
                     }
                 }
                 catch (err) {

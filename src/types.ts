@@ -11,7 +11,18 @@ export interface HedgehogFinanceResolvedAccount {
 }
 
 export interface RelayInboundMessage {
-    type: "req" | "reply" | "item_event" | "usage" | "model" | "reasoning";
+    type:
+        | "req"
+        | "reply"
+        | "assistant_message_start"
+        | "item_event"
+        | "tool_start"
+        | "tool_result"
+        | "command_output"
+        | "usage"
+        | "model"
+        | "reasoning"
+        | "reasoning_end";
     from: string;
     chatId: string;
     id: string;
