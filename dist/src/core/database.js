@@ -16,7 +16,6 @@ function performBackup(trigger = 'cron') {
         const safeTimestamp = new Date().toISOString().replace(/[:]/g, '-');
         const backupFilePath = path.join(backupDir, `business_backup_${safeTimestamp}_${trigger}.db`);
         copyFileSync(dbPath, backupFilePath);
-        logger.info({ trigger, backupFilePath }, "数据库已自动备份");
         const files = readdirSync(backupDir);
         const backupFiles = files
             .filter((f) => f.startsWith("business_backup_") && f.endsWith(".db"))
@@ -29,7 +28,6 @@ function performBackup(trigger = 'cron') {
             const filesToDelete = backupFiles.slice(0, backupFiles.length - MAX_BACKUPS);
             for (const fileObj of filesToDelete) {
                 unlinkSync(fileObj.path);
-                logger.info({ fileName: path.basename(fileObj.path) }, "清理过期备份");
             }
         }
     }
@@ -46,7 +44,6 @@ function startDailyBackupJob() {
             performBackup('cron');
             scheduleNextBackup();
         }, delayMs);
-        logger.info({ nextBackupTime: nextBackupTime.toLocaleString() }, "已安排下一次定时备份");
     };
     scheduleNextBackup();
 }

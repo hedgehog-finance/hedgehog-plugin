@@ -20,7 +20,6 @@ export function setHedgehogRuntime(next: PluginRuntime): void {
 
 		dbPath = path.join(workspaceDir, "data", "business.db");
 		backupDir = path.join(workspaceDir, "backups");
-		logger.info({ workspaceDir, dbPath }, "resolved workspace");
 	} catch (e) {
 		logger.error({ err: e }, "Failed to resolve workspace");
 	}

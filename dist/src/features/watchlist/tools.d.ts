@@ -56,6 +56,7 @@ export declare const watchlistTools: {
                 }>;
             }, z.core.$strip>>;
         }, z.core.$strip>;
+        registerTool: boolean;
         execute: (args: {
             stocks: AddToWatchlistParams[];
         }, ctx: {
@@ -73,6 +74,7 @@ export declare const watchlistTools: {
                 theme: "theme";
             }>>;
         }, z.core.$strip>;
+        registerTool: boolean;
         execute: (args: GetWatchlistParams, ctx: {
             userId: string;
         }) => Promise<string>;
@@ -81,6 +83,7 @@ export declare const watchlistTools: {
         name: string;
         description: string;
         parameters: z.ZodObject<{}, z.core.$strip>;
+        registerTool: boolean;
         execute: (_args: {}, ctx: {
             userId: string;
         }) => Promise<string>;
@@ -89,6 +92,7 @@ export declare const watchlistTools: {
         name: string;
         description: string;
         parameters: z.ZodObject<{}, z.core.$strip>;
+        registerTool: boolean;
         execute: (_args: {}, ctx: {
             userId: string;
         }) => Promise<string>;
@@ -97,6 +101,7 @@ export declare const watchlistTools: {
         name: string;
         description: string;
         parameters: z.ZodObject<{}, z.core.$strip>;
+        registerTool: boolean;
         execute: (_args: {}, ctx: {
             userId: string;
             runtime?: PluginRuntime;
@@ -109,6 +114,7 @@ export declare const watchlistTools: {
             industries: z.ZodOptional<z.ZodArray<z.ZodString>>;
             themes: z.ZodOptional<z.ZodArray<z.ZodString>>;
         }, z.core.$strip>;
+        registerTool: boolean;
         execute: (args: SyncCategoriesParams, ctx: {
             userId: string;
         }) => Promise<string>;
@@ -119,6 +125,7 @@ export declare const watchlistTools: {
         parameters: z.ZodObject<{
             orderedIds: z.ZodArray<z.ZodString>;
         }, z.core.$strip>;
+        registerTool: boolean;
         execute: (args: BatchUpdateSortOrdersParams, ctx: {
             userId: string;
         }) => Promise<string>;
@@ -127,6 +134,7 @@ export declare const watchlistTools: {
         name: string;
         description: string;
         parameters: z.ZodObject<{}, z.core.$strip>;
+        registerTool: boolean;
         execute: (_args: {}, ctx: {
             userId: string;
             runtime?: PluginRuntime;

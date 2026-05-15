@@ -15,7 +15,6 @@ export function setHedgehogRuntime(next) {
             path.join(os.homedir(), ".openclaw", "hedgehog-workspace");
         dbPath = path.join(workspaceDir, "data", "business.db");
         backupDir = path.join(workspaceDir, "backups");
-        logger.info({ workspaceDir, dbPath }, "resolved workspace");
     }
     catch (e) {
         logger.error({ err: e }, "Failed to resolve workspace");

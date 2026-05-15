@@ -113,13 +113,6 @@ function upsertStockClassificationCache(
 			DELETE FROM global_stock_metadata WHERE stockCode = ? AND exchange = ?
 		`).run(legacyCode, stock.exchange);
 	}
-	logger.info({
-		stockCode: stock.stockCode,
-		cacheCode,
-		exchange: stock.exchange,
-		industry: classification.industry.name,
-		themeCount: classification.theme?.length || 0
-	}, "[Watchlist] classification cache upserted");
 }
 
 export const watchlistTools = {
@@ -195,6 +188,7 @@ export const watchlistTools = {
 		name: "batch_add_to_watchlist",
 		description: "批量添加股票到自选列表。添加多只股票时必须使用这个工具，不要循环调用 add_to_watchlist。",
 		parameters: z.object({ stocks: z.array(AddToWatchlistParamsSchema) }),
+		registerTool: false,
 		execute: async (args: { stocks: AddToWatchlistParams[] }, ctx: { userId: string, runtime?: PluginRuntime }) => {
 			return enqueueWatchlistMutation(async () => {
 				if (!Array.isArray(args.stocks) || args.stocks.length === 0) {
@@ -229,12 +223,6 @@ export const watchlistTools = {
 						stocksToAdd.push(stock);
 					}
 				}
-				logger.info({
-					count: args.stocks?.length ?? 0,
-					addCount: stocksToAdd.length,
-					skippedCount: skipped.length,
-					codes: args.stocks?.map(stock => stock.stockCode)
-				}, "[Watchlist] batch_add_to_watchlist received");
 				if (stocksToAdd.length === 0) {
 					return JSON.stringify({ success: true, ids: [], skipped });
 				}
@@ -302,14 +290,6 @@ export const watchlistTools = {
 						});
 					}
 
-					if (results.length !== stocksToAdd.length) {
-						logger.info({
-							input: args.stocks.length,
-							addRequested: stocksToAdd.length,
-							written: results.length,
-							skipped: skipped.length
-						}, "[Watchlist] batch_add_to_watchlist skipped duplicates");
-					}
 					db.exec("COMMIT");
 					return JSON.stringify({ success: true, ids: results, skipped });
 				} catch (e: any) {
@@ -324,6 +304,7 @@ export const watchlistTools = {
 		name: "get_watchlist",
 		description: "获取自选股列表",
 		parameters: GetWatchlistParamsSchema,
+		registerTool: false,
 		execute: async (args: GetWatchlistParams, ctx: { userId: string }) => {
 			try {
 				const db = getDB();
@@ -387,6 +368,7 @@ export const watchlistTools = {
 		name: "get_thematic_dashboard",
 		description: "获取聚合后的主题/行业看板数据",
 		parameters: z.object({}),
+		registerTool: false,
 		execute: async (_args: {}, ctx: { userId: string }) => {
 			try {
 				const db = getDB();
@@ -428,6 +410,7 @@ export const watchlistTools = {
 		name: "get_watchlist_tabs",
 		description: "获取分类页签",
 		parameters: z.object({}),
+		registerTool: false,
 		execute: async (_args: {}, ctx: { userId: string }) => {
 			try {
 				const db = getDB();
@@ -462,6 +445,7 @@ export const watchlistTools = {
 		name: "smart_reorder_watchlist",
 		description: "触发 AI 智能排序",
 		parameters: z.object({}),
+		registerTool: false,
 		execute: async (_args: {}, ctx: { userId: string, runtime?: PluginRuntime }) => {
 			if (!ctx.runtime) return JSON.stringify({ success: false, error: "Runtime not available" });
 			const db = getDB();
@@ -495,6 +479,7 @@ export const watchlistTools = {
 		name: "sync_watchlist_categories",
 		description: "同步分类字典",
 		parameters: SyncCategoriesParamsSchema,
+		registerTool: false,
 		execute: async (args: SyncCategoriesParams, ctx: { userId: string }) => {
 			const db = getDB();
 			const uId = String(ctx.userId);
@@ -533,6 +518,7 @@ export const watchlistTools = {
 		name: "batch_update_sort_orders",
 		description: "批量更新排序",
 		parameters: BatchUpdateSortOrdersParamsSchema,
+		registerTool: false,
 		execute: async (args: BatchUpdateSortOrdersParams, ctx: { userId: string }) => {
 			const db = getDB();
 			const uId = String(ctx.userId);
@@ -556,6 +542,7 @@ export const watchlistTools = {
 		name: "reset_watchlist_classification",
 		description: "清除并重新进行智能分类",
 		parameters: z.object({}),
+		registerTool: false,
 		execute: async (_args: {}, ctx: { userId: string, runtime?: PluginRuntime }) => {
 			if (!ctx.runtime) return JSON.stringify({ success: false, error: "Runtime not available" });
 			const db = getDB();
@@ -595,7 +582,7 @@ export const watchlistTools = {
 									}
 								}
 							});
-						}).catch(err => console.error("[Watchlist] 重置分类失败:", err));
+						}).catch(err => logger.error({ err }, "[Watchlist] 重置分类失败"));
 				}
 				db.exec("COMMIT");
 				return JSON.stringify({ success: true, message: "重置分类请求已提交" });

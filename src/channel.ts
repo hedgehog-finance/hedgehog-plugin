@@ -835,6 +835,17 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 					clearStreamStates();
 
 					if (!isClosing) {
+						const closeReason = reason.toString() || "";
+						if (closeCode === 4001 || closeCode === 4003) {
+							childLogger.error({ closeCode, reason: closeReason }, "Relay rejected credentials. Reconnect stopped.");
+							ctx.setStatus({
+								...ctx.getStatus(),
+								running: false,
+								lastError: `Relay auth failed (${closeCode}): ${closeReason || "Forbidden"}`,
+							});
+							return;
+						}
+
 						const retryDelay = 5000 + Math.random() * 5000;
 						childLogger.warn({ closeCode, retryDelay: Math.round(retryDelay / 1000) }, "Connection dropped. Retrying...");
 						ctx.setStatus({

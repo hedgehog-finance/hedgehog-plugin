@@ -32,10 +32,6 @@ const CLASSIFIER_SYSTEM_PROMPT = [
 	"只允许根据用户消息中提供的行业/主题分类字典和股票列表输出纯 JSON 数组。"
 ].join("\n");
 
-function nowMs(): number {
-	return Date.now();
-}
-
 function resolveModelRef(modelConfig: unknown): string | undefined {
 	if (typeof modelConfig === "string" && modelConfig.trim()) return modelConfig.trim();
 	if (!modelConfig || typeof modelConfig !== "object" || Array.isArray(modelConfig)) return undefined;
@@ -210,11 +206,6 @@ export const watchlistLogic = {
 
 		if (cached && cached.industryJson) {
 			try {
-				logger.info({
-					stockCode,
-					cacheCode: normalizeStockCodeForCache(stockCode, exchange),
-					exchange
-				}, "[Watchlist] classification cache hit");
 				return watchlistLogic._normalizeCachedClassification({
 					industry: JSON.parse(cached.industryJson),
 					theme: JSON.parse(cached.themeJson || '[]'),
@@ -243,11 +234,6 @@ export const watchlistLogic = {
 
 			if (cached && cached.industryJson) {
 				try {
-					logger.info({
-						stockCode: stock.stockCode,
-						cacheCode: normalizeStockCodeForCache(stock.stockCode, stock.exchange),
-						exchange: stock.exchange
-					}, "[Watchlist] classification cache hit");
 					results[idx] = watchlistLogic._normalizeCachedClassification({
 						industry: JSON.parse(cached.industryJson),
 						theme: JSON.parse(cached.themeJson || '[]'),
@@ -265,13 +251,6 @@ export const watchlistLogic = {
 				exchange: stock.exchange
 			});
 		});
-
-		logger.info({
-			total: stocks.length,
-			cached: stocks.length - pendingStocks.length,
-			pending: pendingStocks.length,
-			pendingCodes: pendingStocks.map(stock => stock.stockCode)
-		}, "[Watchlist] batch add classification input");
 
 		if (pendingStocks.length === 0) {
 			return results as StockClassification[];
@@ -361,13 +340,6 @@ export const watchlistLogic = {
 				pendingStocks.push({ idx: i, name: s.stockName, code: s.stockCode, exchange: s.exchange });
 			}
 		});
-		logger.info({
-			total: stocks.length,
-			cached: stocks.length - pendingStocks.length,
-			pending: pendingStocks.length,
-			pendingCodes: pendingStocks.map(s => s.code)
-		}, "[Watchlist] batch classification input");
-
 		if (pendingStocks.length > 0) {
 			const cats = watchlistLogic._getKnownCategories(db);
 			if (cats.industries.length === 0) return results;
@@ -482,13 +454,11 @@ export const watchlistLogic = {
 				}
 			}
 		};
-		const startedAt = nowMs();
 		const prepared = await prepareSimpleCompletionModel({
 			cfg: embeddedCfg,
 			provider,
 			modelId: model
 		});
-		const preparedAt = nowMs();
 		if ("error" in prepared) {
 			throw new Error(prepared.error);
 		}
@@ -497,13 +467,6 @@ export const watchlistLogic = {
 			abortController.abort(new Error(`classifier completion timed out after ${timeoutMs}ms`));
 		}, timeoutMs);
 		try {
-			logger.info({
-				sessionId,
-				provider,
-				model,
-				maxTokens
-			}, "[Watchlist] classifier simple completion start");
-
 			const result = await completeSimple(prepared.model, {
 				systemPrompt: CLASSIFIER_SYSTEM_PROMPT,
 				messages: [{
@@ -517,28 +480,11 @@ export const watchlistLogic = {
 				signal: abortController.signal,
 				onPayload: disableClassifierReasoningPayload
 			});
-			const completedAt = nowMs();
 			const aiText = extractAssistantText(result)?.trim() || "";
 			if (!aiText) {
 				throw new Error("AI 分类分析未返回内容");
 			}
 			extractJsonArray(aiText);
-			logger.info({
-				sessionId,
-				responseId: result.responseId,
-				usage: result.usage,
-				stopReason: result.stopReason,
-				contentBlocks: Array.isArray(result.content)
-					? result.content.map((block: any) => block?.type || typeof block)
-					: [],
-				timingMs: {
-					prepare: preparedAt - startedAt,
-					complete: completedAt - preparedAt,
-					total: completedAt - startedAt
-				},
-				aiTextLength: aiText.length,
-				aiText
-			}, "[Watchlist] classifier simple completion completed");
 			return aiText;
 		} finally {
 			clearTimeout(abortTimer);

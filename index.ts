@@ -17,7 +17,5 @@ export default defineChannelPluginEntry({
 			const registerable = { ...tool, label: tool.description };
 			api.registerTool(registerable as any, { name });
 		});
-
-		api.logger.info("[hedgehog-app] Registered tools and runtime context.");
 	},
 });
