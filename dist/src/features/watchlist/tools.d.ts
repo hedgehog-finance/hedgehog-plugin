@@ -64,6 +64,19 @@ export declare const watchlistTools: {
             runtime?: PluginRuntime;
         }) => Promise<string>;
     };
+    remove_from_watchlist: {
+        name: string;
+        description: string;
+        parameters: z.ZodObject<{
+            id: z.ZodString;
+        }, z.core.$strip>;
+        registerTool: boolean;
+        execute: (args: {
+            id: string;
+        }, ctx: {
+            userId: string;
+        }) => Promise<string>;
+    };
     get_watchlist: {
         name: string;
         description: string;

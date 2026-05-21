@@ -14,9 +14,9 @@ const CLASSIFIER_OUTPUT_BASE_TOKENS = 1000;
 const CLASSIFIER_OUTPUT_PER_STOCK_TOKENS = 260;
 const CLASSIFIER_OUTPUT_MAX_TOKENS = 4096;
 const CLASSIFIER_SYSTEM_PROMPT = [
-    "你是一个股票行业/主题分类器，只能完成当前 JSON 分类任务。",
+    "你是一个低延迟股票行业/主题分类器，只能完成当前 JSON 分类任务。",
     "禁止检查、加载、调用或提及任何技能、工具、外部数据源或工作区文件。",
-    "禁止输出推理过程、解释、Markdown 或代码块。",
+    "禁止输出推理过程、解释、Markdown 或代码块；不要思考展开，只做快速匹配。",
     "只允许根据用户消息中提供的行业/主题分类字典和股票列表输出纯 JSON 数组。"
 ].join("\n");
 function resolveModelRef(modelConfig) {
@@ -115,13 +115,37 @@ function disableClassifierReasoningPayload(payload, model) {
     else {
         delete next.reasoning;
     }
+    if (Array.isArray(next.include)) {
+        next.include = next.include.filter((item) => !String(item).startsWith("reasoning."));
+    }
     const modelInfo = (model && typeof model === "object" ? model : {});
     const provider = String(modelInfo.provider || "").toLowerCase();
     const baseUrl = String(modelInfo.baseUrl || "").toLowerCase();
+    const modelId = String(modelInfo.id || "").toLowerCase();
+    const isGoogleProvider = provider === "google"
+        || provider === "google-vertex"
+        || baseUrl.includes("generativelanguage.googleapis.com")
+        || baseUrl.includes("aiplatform.googleapis.com");
     const compat = modelInfo.compat && typeof modelInfo.compat === "object"
         ? modelInfo.compat
         : {};
     const thinkingFormat = String(compat.thinkingFormat || "").toLowerCase();
+    const config = next.config && typeof next.config === "object" && !Array.isArray(next.config)
+        ? { ...next.config }
+        : undefined;
+    if (config && isGoogleProvider) {
+        config.responseMimeType ??= "application/json";
+        if (modelId.includes("gemini-3") && modelId.includes("flash")) {
+            config.thinkingConfig = { thinkingLevel: "MINIMAL" };
+        }
+        else if (modelId.includes("gemini-3")) {
+            config.thinkingConfig = { thinkingLevel: "LOW" };
+        }
+        else {
+            config.thinkingConfig = { thinkingBudget: 0 };
+        }
+        next.config = config;
+    }
     const usesBooleanThinkingToggle = thinkingFormat === "qwen"
         || thinkingFormat === "qwen-chat-template"
         || thinkingFormat === "zai"
@@ -409,6 +433,7 @@ export const watchlistLogic = {
                     }]
             }, {
                 apiKey: prepared.auth.apiKey,
+                temperature: 0,
                 maxTokens,
                 signal: abortController.signal,
                 onPayload: disableClassifierReasoningPayload

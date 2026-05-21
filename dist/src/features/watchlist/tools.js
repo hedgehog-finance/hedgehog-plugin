@@ -253,6 +253,42 @@ export const watchlistTools = {
             });
         }
     },
+    remove_from_watchlist: {
+        name: "remove_from_watchlist",
+        description: "将股票从自选列表中移除",
+        parameters: z.object({ id: z.string() }),
+        registerTool: false,
+        execute: async (args, ctx) => {
+            return enqueueWatchlistMutation(async () => {
+                const db = getDB();
+                const uId = String(ctx.userId);
+                if (db.inTransaction)
+                    db.exec("ROLLBACK");
+                db.exec("BEGIN TRANSACTION");
+                try {
+                    const info = db.prepare(`
+						UPDATE watchlist
+						SET isDeleted = 1,
+							updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
+						WHERE id = ?
+						  AND userId = ?
+						  AND isDeleted = 0
+					`).run(args.id, uId);
+                    if (info.changes > 0) {
+                        db.prepare("DELETE FROM watchlist_industry_items WHERE watchlistId = ? AND userId = ?").run(args.id, uId);
+                        db.prepare("DELETE FROM watchlist_theme_items WHERE watchlistId = ? AND userId = ?").run(args.id, uId);
+                    }
+                    db.exec("COMMIT");
+                    return JSON.stringify({ success: info.changes > 0 });
+                }
+                catch (e) {
+                    if (db.inTransaction)
+                        db.exec("ROLLBACK");
+                    return JSON.stringify({ success: false, error: e.message });
+                }
+            });
+        }
+    },
     get_watchlist: {
         name: "get_watchlist",
         description: "获取自选股列表",
