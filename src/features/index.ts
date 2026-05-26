@@ -1,4 +1,6 @@
 import { watchlistTools } from "./watchlist/tools.js";
+import { profileLibraryTools } from "./profileLibrary/tools.js";
+import { noteTools } from "./notes/tools.js";
 
 export interface RuntimeTool {
     name: string;
@@ -10,5 +12,7 @@ export interface RuntimeTool {
 }
 
 export const allFeaturesTools: Record<string, RuntimeTool> = {
-    ...watchlistTools
+    ...watchlistTools,
+    ...profileLibraryTools,
+    ...noteTools
 };

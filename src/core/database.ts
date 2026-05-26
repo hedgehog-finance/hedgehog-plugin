@@ -141,6 +141,14 @@ function runWatchlistDedupMigrations(db: DatabaseSync) {
 	`);
 }
 
+function runStockNotesMigrations(db: DatabaseSync) {
+	const columns = db.prepare("PRAGMA table_info(stock_notes)").all() as { name: string }[];
+	if (columns.length > 0 && !columns.some(column => column.name === "watchlistId")) {
+		db.prepare("ALTER TABLE stock_notes ADD COLUMN watchlistId TEXT").run();
+	}
+	db.exec("CREATE INDEX IF NOT EXISTS idx_stock_notes_user_stock ON stock_notes(userId, watchlistId, updatedAt DESC)");
+}
+
 export function getDB(): DatabaseSync {
 	if (!_db) {
 		const dbPath = getDbPath();
@@ -220,9 +228,40 @@ export function getDB(): DatabaseSync {
 			UNIQUE(watchlistId, categoryId)
 		);
 		CREATE INDEX IF NOT EXISTS idx_watchlist_theme_user ON watchlist_theme_items(userId);
+
+		CREATE TABLE IF NOT EXISTS profile_libraries (
+			id            TEXT NOT NULL,
+			userId        TEXT NOT NULL,
+			title         TEXT NOT NULL,
+			createdAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
+			updatedAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
+			PRIMARY KEY(id, userId)
+		);
+		CREATE INDEX IF NOT EXISTS idx_profile_libraries_user_title ON profile_libraries(userId, title);
+
+		CREATE TABLE IF NOT EXISTS stock_notes (
+			id            TEXT NOT NULL,
+			userId        TEXT NOT NULL,
+			watchlistId   TEXT NOT NULL,
+			note          TEXT NOT NULL CHECK (length(note) <= 200),
+			createdAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
+			updatedAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
+			PRIMARY KEY(id, userId)
+		);
+
+		CREATE TABLE IF NOT EXISTS stock_note_profile_libraries (
+			id                TEXT PRIMARY KEY,
+			noteId            TEXT NOT NULL,
+			userId            TEXT NOT NULL,
+			profileLibraryId  TEXT NOT NULL,
+			createdAt         DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
+			UNIQUE(noteId, userId, profileLibraryId)
+		);
+		CREATE INDEX IF NOT EXISTS idx_stock_note_profile_libraries_user_note ON stock_note_profile_libraries(userId, noteId);
 		`);
 
 		runWatchlistDedupMigrations(_db);
+		runStockNotesMigrations(_db);
 	}
 	return _db;
 }

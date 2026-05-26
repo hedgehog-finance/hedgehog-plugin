@@ -135,6 +135,11 @@ export const watchlistTools = {
 					return JSON.stringify({ success: true, skipped: true, reason: "duplicate", id: existingBeforeClassify.id });
 				}
 
+				const currentCount = (db.prepare("SELECT COUNT(*) as count FROM watchlist WHERE userId = ? AND isDeleted = 0").get(uId) as { count: number }).count;
+				if (currentCount >= 30) {
+					return JSON.stringify({ success: false, error: "自选股数量已达 30 只上限，请先移除部分股票" });
+				}
+
 				let classification: Awaited<ReturnType<typeof watchlistLogic.getStockClassification>>;
 				try {
 					classification = await watchlistLogic.getStockClassification(ctx.runtime, stock.stockName, stock.stockCode, stock.exchange, uId);
@@ -225,6 +230,14 @@ export const watchlistTools = {
 				}
 				if (stocksToAdd.length === 0) {
 					return JSON.stringify({ success: true, ids: [], skipped });
+				}
+
+				const currentCount = (db.prepare("SELECT COUNT(*) as count FROM watchlist WHERE userId = ? AND isDeleted = 0").get(uId) as { count: number }).count;
+				if (currentCount + stocksToAdd.length > 30) {
+					return JSON.stringify({
+						success: false,
+						error: `自选股数量已达 30 只上限（当前已有 ${currentCount} 只，本次尝试添加 ${stocksToAdd.length} 只）`
+					});
 				}
 
 				let batchResults: Awaited<ReturnType<typeof watchlistLogic.classifyStocksTogether>>;
@@ -325,6 +338,14 @@ export const watchlistTools = {
 					if (info.changes > 0) {
 						db.prepare("DELETE FROM watchlist_industry_items WHERE watchlistId = ? AND userId = ?").run(args.id, uId);
 						db.prepare("DELETE FROM watchlist_theme_items WHERE watchlistId = ? AND userId = ?").run(args.id, uId);
+						
+						// 同时删除该自选股关联的所有投研笔记及笔记与资料库的绑定关系
+						db.prepare(`
+							DELETE FROM stock_note_profile_libraries 
+							WHERE userId = ? 
+							  AND noteId IN (SELECT id FROM stock_notes WHERE watchlistId = ? AND userId = ?)
+						`).run(uId, args.id, uId);
+						db.prepare("DELETE FROM stock_notes WHERE watchlistId = ? AND userId = ?").run(args.id, uId);
 					}
 
 					db.exec("COMMIT");
@@ -584,48 +605,70 @@ export const watchlistTools = {
 			if (!ctx.runtime) return JSON.stringify({ success: false, error: "Runtime not available" });
 			const db = getDB();
 			const uId = String(ctx.userId);
-			db.exec("BEGIN TRANSACTION");
 			try {
-				db.prepare("DELETE FROM watchlist_industry_items WHERE userId = ?").run(uId);
-				db.prepare("DELETE FROM watchlist_theme_items WHERE userId = ?").run(uId);
 				const stocks = db.prepare("SELECT stockName, stockCode, exchange, market FROM watchlist WHERE userId = ? AND isDeleted = 0").all(uId) as any[];
-				if (stocks.length > 0) {
-					watchlistLogic.getBatchStockClassification(ctx.runtime, stocks, uId, { forceRefresh: true })
-						.then(batchResults => {
-							const db2 = getDB();
-							const userStocks = db2.prepare("SELECT id, stockCode, exchange FROM watchlist WHERE userId = ? AND isDeleted = 0").all(uId) as any[];
-							batchResults.forEach((res, i) => {
-								if (res) {
-									const s = stocks[i];
-									const match = userStocks.find(us => us.stockCode === s.stockCode && us.exchange === s.exchange);
-									if (match) {
-										upsertStockClassificationCache(db2, {
-											stockName: s.stockName,
-											stockCode: s.stockCode,
-											exchange: s.exchange,
-											market: s.market
-										}, res);
-										const cats = [
-											...(res.industry ? [{ name: res.industry.name, type: 'industry' as const, weight: res.industry.weight }] : []),
-											...res.theme.map((t: any) => ({ name: t.name, type: 'theme' as const, weight: t.weight }))
-										];
-										cats.forEach(c => {
-											const catId = watchlistLogic._ensureCategory(db2, c.name, c.type, uId);
-											if (catId) {
-												const table = c.type === 'industry' ? 'watchlist_industry_items' : 'watchlist_theme_items';
-												db2.prepare(`INSERT OR IGNORE INTO ${table} (id, watchlistId, userId, categoryId, weight) VALUES (?, ?, ?, ?, ?)`).run(randomUUID(), match.id, uId, catId, c.weight);
-											}
-										});
-									}
-								}
-							});
-						}).catch(err => logger.error({ err }, "[Watchlist] 重置分类失败"));
+				if (stocks.length > 30) {
+					return JSON.stringify({ success: false, error: "自选股数量超过 30 只，暂不支持批量重置分类" });
 				}
-				db.exec("COMMIT");
-				return JSON.stringify({ success: true, message: "重置分类请求已提交" });
+				if (stocks.length > 0) {
+					// 1. 强制等待 AI 批量分类结果（在事务外部执行耗时 API 请求，避免锁库）
+					const batchResults = await watchlistLogic.getBatchStockClassification(ctx.runtime, stocks, uId, {
+						forceRefresh: true,
+						requireComplete: true
+					});
+
+					// 2. 开启数据库事务，清空并更新分类
+					db.exec("BEGIN TRANSACTION");
+					try {
+						db.prepare("DELETE FROM watchlist_industry_items WHERE userId = ?").run(uId);
+						db.prepare("DELETE FROM watchlist_theme_items WHERE userId = ?").run(uId);
+
+						const userStocks = db.prepare("SELECT id, stockCode, exchange FROM watchlist WHERE userId = ? AND isDeleted = 0").all(uId) as any[];
+						batchResults.forEach((res, i) => {
+							if (res) {
+								const s = stocks[i];
+								const match = userStocks.find(us => us.stockCode === s.stockCode && us.exchange === s.exchange);
+								if (match) {
+									upsertStockClassificationCache(db, {
+										stockName: s.stockName,
+										stockCode: s.stockCode,
+										exchange: s.exchange,
+										market: s.market
+									}, res);
+									const cats = [
+										...(res.industry ? [{ name: res.industry.name, type: 'industry' as const, weight: res.industry.weight }] : []),
+										...res.theme.map((t: any) => ({ name: t.name, type: 'theme' as const, weight: t.weight }))
+									];
+									cats.forEach(c => {
+										const catId = watchlistLogic._ensureCategory(db, c.name, c.type, uId);
+										if (catId) {
+											const table = c.type === 'industry' ? 'watchlist_industry_items' : 'watchlist_theme_items';
+											db.prepare(`INSERT OR IGNORE INTO ${table} (id, watchlistId, userId, categoryId, weight) VALUES (?, ?, ?, ?, ?)`).run(randomUUID(), match.id, uId, catId, c.weight);
+										}
+									});
+								}
+							}
+						});
+						db.exec("COMMIT");
+					} catch (transactionError: any) {
+						if (db.inTransaction) db.exec("ROLLBACK");
+						throw transactionError;
+					}
+				} else {
+					// 如果没有自选股，也正常开启事务清空旧的分类数据
+					db.exec("BEGIN TRANSACTION");
+					try {
+						db.prepare("DELETE FROM watchlist_industry_items WHERE userId = ?").run(uId);
+						db.prepare("DELETE FROM watchlist_theme_items WHERE userId = ?").run(uId);
+						db.exec("COMMIT");
+					} catch (transactionError: any) {
+						if (db.inTransaction) db.exec("ROLLBACK");
+						throw transactionError;
+					}
+				}
+				return JSON.stringify({ success: true, message: "智能分类已完成重置" });
 			} catch (e: any) {
-				db.exec("ROLLBACK");
-				return JSON.stringify({ success: false, error: e.message });
+				return JSON.stringify({ success: false, error: e.message || "重置分类失败" });
 			}
 		}
 	}
