@@ -415,11 +415,26 @@ export const hedgehogFinancePlugin = {
                         accountId: String(accountId),
                         peer: { kind: "direct", id: chatId },
                     });
+                    let agentId = route.agentId;
+                    let sessionKey = route.sessionKey;
+                    let agentWorkspace = route.agentWorkspace;
+                    if (chatId && chatId.startsWith("main")) {
+                        agentId = "main";
+                        sessionKey = rt.channel.routing.buildAgentSessionKey({
+                            agentId: "main",
+                            channel: "hedgehog_finance",
+                            accountId: String(accountId),
+                            peer: { kind: "direct", id: chatId },
+                        });
+                        const agentList = (cfg.agents?.list || []);
+                        const mainAgent = agentList.find((a) => a.id === "main") || agentList[0];
+                        agentWorkspace = mainAgent?.workspace ||
+                            cfg.agents?.defaults?.workspace ||
+                            path.join(os.homedir(), ".openclaw", "hedgehog-workspace");
+                    }
                     const storePath = rt.channel.session.resolveStorePath(cfg.session?.store, {
-                        agentId: route.agentId,
+                        agentId: agentId,
                     });
-                    const sessionKey = route.sessionKey;
-                    const agentId = route.agentId;
                     const entryBefore = await getSessionEntryAsync(agentId, sessionKey);
                     const sessionIdBefore = entryBefore?.sessionId || null;
                     const lineCountBefore = sessionIdBefore ? await getJsonlLineCountAsync(agentId, sessionIdBefore) : 0;
@@ -430,7 +445,7 @@ export const hedgehogFinancePlugin = {
                         SessionKey: sessionKey,
                         AccountId: route.accountId,
                         AgentId: agentId,
-                        AgentWorkspace: route.agentWorkspace,
+                        AgentWorkspace: agentWorkspace,
                         Provider: "hedgehog_finance",
                         MessageSid: id,
                     });
