@@ -11,10 +11,24 @@
     "outDir": "dist",
     "declaration": true,
     "sourceMap": true,
-    "types": ["node"],
+    "types": [
+      "node"
+    ],
     "paths": {
-      "openclaw/*": ["node_modules/openclaw/*"]
+      "openclaw": [
+        "node_modules/openclaw/dist/index.d.ts"
+      ],
+      "openclaw/plugin-sdk": [
+        "node_modules/openclaw/dist/plugin-sdk/index.d.ts"
+      ],
+      "openclaw/*": [
+        "node_modules/openclaw/dist/*.d.ts",
+        "node_modules/openclaw/*"
+      ]
     }
   },
-  "include": ["index.ts", "src/**/*.ts"]
+  "include": [
+    "index.ts",
+    "src/**/*.ts"
+  ]
 }

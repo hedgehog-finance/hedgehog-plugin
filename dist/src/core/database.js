@@ -142,6 +142,90 @@ function runStockNotesMigrations(db) {
     }
     db.exec("CREATE INDEX IF NOT EXISTS idx_stock_notes_user_stock ON stock_notes(userId, watchlistId, updatedAt DESC)");
 }
+function runStockAiAnalysisMigrations(db) {
+    const indexes = db.prepare("PRAGMA index_list(stock_ai_analysis)").all();
+    const hasUniqueStockIndex = indexes.some(index => {
+        if (index.unique !== 1)
+            return false;
+        const columns = db.prepare(`PRAGMA index_info(${index.name})`).all();
+        const columnNames = columns.map(column => column.name);
+        return columnNames.includes("userId") && columnNames.includes("stockCode");
+    });
+    if (!hasUniqueStockIndex)
+        return;
+    db.exec("BEGIN");
+    try {
+        db.exec(`
+			DROP TABLE IF EXISTS stock_ai_analysis_history;
+
+			CREATE TABLE stock_ai_analysis_history (
+				id            TEXT NOT NULL,
+				userId        TEXT NOT NULL,
+				stockCode     TEXT NOT NULL,
+				stockName     TEXT NOT NULL,
+				market        TEXT NOT NULL DEFAULT 'CN',
+				content       TEXT NOT NULL,
+				createdAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
+				updatedAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
+				PRIMARY KEY(id, userId)
+			);
+
+			INSERT INTO stock_ai_analysis_history (id, userId, stockCode, stockName, market, content, createdAt, updatedAt)
+			SELECT id, userId, stockCode, stockName, market, content, createdAt, updatedAt
+			FROM stock_ai_analysis;
+
+			DROP TABLE stock_ai_analysis;
+			ALTER TABLE stock_ai_analysis_history RENAME TO stock_ai_analysis;
+			CREATE INDEX IF NOT EXISTS idx_stock_ai_analysis_user_stock_updated ON stock_ai_analysis(userId, stockCode, updatedAt DESC);
+		`);
+        db.exec("COMMIT");
+    }
+    catch (e) {
+        if (db.inTransaction)
+            db.exec("ROLLBACK");
+        throw e;
+    }
+}
+function runArticleAiAnalysisMigrations(db) {
+    const columns = db.prepare("PRAGMA table_info(article_ai_analysis)").all();
+    if (columns.length === 0 || columns.some(column => column.name === "sourceId")) {
+        return;
+    }
+    db.exec("BEGIN");
+    try {
+        db.exec(`
+			DROP TABLE IF EXISTS article_ai_analysis_v2;
+
+			CREATE TABLE article_ai_analysis_v2 (
+				id            TEXT NOT NULL,
+				sourceId      TEXT NOT NULL,
+				userId        TEXT NOT NULL,
+				analysisType  TEXT NOT NULL,
+				market        TEXT NOT NULL DEFAULT 'CN',
+				content       TEXT NOT NULL,
+				createdAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
+				updatedAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
+				PRIMARY KEY(id, userId),
+				UNIQUE(sourceId, userId, analysisType, market)
+			);
+
+			INSERT INTO article_ai_analysis_v2 (id, sourceId, userId, analysisType, market, content, createdAt, updatedAt)
+			SELECT lower(hex(randomblob(16))), id, userId, analysisType, market, content, createdAt, updatedAt
+			FROM article_ai_analysis;
+
+			DROP TABLE article_ai_analysis;
+			ALTER TABLE article_ai_analysis_v2 RENAME TO article_ai_analysis;
+			CREATE INDEX IF NOT EXISTS idx_article_ai_analysis_user_source_type_updated
+				ON article_ai_analysis(userId, sourceId, analysisType, updatedAt DESC);
+		`);
+        db.exec("COMMIT");
+    }
+    catch (e) {
+        if (db.inTransaction)
+            db.exec("ROLLBACK");
+        throw e;
+    }
+}
 export function getDB() {
     if (!_db) {
         const dbPath = getDbPath();
@@ -249,9 +333,38 @@ export function getDB() {
 			UNIQUE(noteId, userId, profileLibraryId)
 		);
 		CREATE INDEX IF NOT EXISTS idx_stock_note_profile_libraries_user_note ON stock_note_profile_libraries(userId, noteId);
+
+		CREATE TABLE IF NOT EXISTS stock_ai_analysis (
+			id            TEXT NOT NULL,
+			userId        TEXT NOT NULL,
+			stockCode     TEXT NOT NULL,
+			stockName     TEXT NOT NULL,
+			market        TEXT NOT NULL DEFAULT 'CN',
+			content       TEXT NOT NULL,
+			createdAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
+			updatedAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
+			PRIMARY KEY(id, userId)
+		);
+		CREATE INDEX IF NOT EXISTS idx_stock_ai_analysis_user_stock_updated ON stock_ai_analysis(userId, stockCode, updatedAt DESC);
+
+		CREATE TABLE IF NOT EXISTS article_ai_analysis (
+			id            TEXT NOT NULL,
+			sourceId      TEXT NOT NULL,
+			userId        TEXT NOT NULL,
+			analysisType  TEXT NOT NULL,
+			market        TEXT NOT NULL DEFAULT 'CN',
+			content       TEXT NOT NULL,
+			createdAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
+			updatedAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
+			PRIMARY KEY(id, userId),
+			UNIQUE(sourceId, userId, analysisType, market)
+		);
+		CREATE INDEX IF NOT EXISTS idx_article_ai_analysis_user_source_type_updated ON article_ai_analysis(userId, sourceId, analysisType, updatedAt DESC);
 		`);
         runWatchlistDedupMigrations(_db);
         runStockNotesMigrations(_db);
+        runStockAiAnalysisMigrations(_db);
+        runArticleAiAnalysisMigrations(_db);
     }
     return _db;
 }

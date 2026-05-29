@@ -61,7 +61,6 @@ export declare const StockClassificationSchema: z.ZodObject<{
     }>, "many">;
     weight: z.ZodDefault<z.ZodNumber>;
 }, "strip", z.ZodTypeAny, {
-    weight: number;
     industry: {
         name: string;
         weight: number;
@@ -70,6 +69,7 @@ export declare const StockClassificationSchema: z.ZodObject<{
         name: string;
         weight: number;
     }[];
+    weight: number;
 }, {
     industry: {
         name: string;
