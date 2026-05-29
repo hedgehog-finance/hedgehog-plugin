@@ -1,13 +1,17 @@
 import { z } from "openclaw/plugin-sdk/zod";
 
 const ExchangeEnum = z.enum(["SSE", "SZSE", "NASDAQ", "NYSE", "AMEX", "HKEX"]);
+const ProfileLibraryInputSchema = z.object({
+	id: z.string().trim().min(1).describe("资料库 ID"),
+	title: z.string().trim().min(1).describe("资料库标题")
+});
 
 export const AddStockNoteParamsSchema = z.object({
 	watchlistId: z.string().trim().min(1).optional().describe("自选股 ID，优先使用该字段绑定股票"),
 	stockCode: z.string().trim().min(1).optional().describe("股票代码；未传 watchlistId 时需与 exchange 一起定位股票"),
 	exchange: ExchangeEnum.optional().describe("交易所；未传 watchlistId 时需与 stockCode 一起定位股票"),
 	note: z.string().trim().min(1).max(200).describe("笔记内容，200 字以内"),
-	profileLibraryIds: z.array(z.string().trim().min(1)).optional().describe("关联资料库 ID 列表")
+	profileLibraryIds: z.array(ProfileLibraryInputSchema).optional().describe("关联资料库列表，格式为 { id, title }")
 }).refine((value) => Boolean(value.watchlistId || (value.stockCode && value.exchange)), {
 	message: "watchlistId 或 stockCode + exchange 必须传一个"
 });
@@ -24,7 +28,7 @@ export const UpdateStockNoteParamsSchema = z.object({
 	stockCode: z.string().trim().min(1).optional().describe("股票代码；与 exchange 一起传入可重新绑定股票"),
 	exchange: ExchangeEnum.optional().describe("交易所；与 stockCode 一起传入可重新绑定股票"),
 	note: z.string().trim().min(1).max(200).optional().describe("笔记内容，200 字以内"),
-	profileLibraryIds: z.array(z.string().trim().min(1)).optional().describe("关联资料库 ID 列表；传入则覆盖原有关联")
+	profileLibraryIds: z.array(ProfileLibraryInputSchema).optional().describe("关联资料库列表，格式为 { id, title }；传入则覆盖原有关联")
 }).refine((value) => !(value.stockCode && !value.exchange) && !(!value.stockCode && value.exchange), {
 	message: "stockCode 与 exchange 必须同时传入"
 });

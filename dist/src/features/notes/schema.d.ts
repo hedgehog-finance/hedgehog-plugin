@@ -11,7 +11,10 @@ export declare const AddStockNoteParamsSchema: z.ZodObject<{
         AMEX: "AMEX";
     }>>;
     note: z.ZodString;
-    profileLibraryIds: z.ZodOptional<z.ZodArray<z.ZodString>>;
+    profileLibraryIds: z.ZodOptional<z.ZodArray<z.ZodObject<{
+        id: z.ZodString;
+        title: z.ZodString;
+    }, z.core.$strip>>>;
 }, z.core.$strip>;
 export type AddStockNoteParams = z.infer<typeof AddStockNoteParamsSchema>;
 export declare const DeleteStockNoteParamsSchema: z.ZodObject<{
@@ -31,7 +34,10 @@ export declare const UpdateStockNoteParamsSchema: z.ZodObject<{
         AMEX: "AMEX";
     }>>;
     note: z.ZodOptional<z.ZodString>;
-    profileLibraryIds: z.ZodOptional<z.ZodArray<z.ZodString>>;
+    profileLibraryIds: z.ZodOptional<z.ZodArray<z.ZodObject<{
+        id: z.ZodString;
+        title: z.ZodString;
+    }, z.core.$strip>>>;
 }, z.core.$strip>;
 export type UpdateStockNoteParams = z.infer<typeof UpdateStockNoteParamsSchema>;
 export declare const GetStockNoteByIdParamsSchema: z.ZodObject<{

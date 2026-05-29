@@ -3,7 +3,7 @@ import { completeSimple } from "@mariozechner/pi-ai";
 import { PluginRuntime } from "openclaw/plugin-sdk";
 import {
 	extractAssistantText,
-	prepareSimpleCompletionModel
+	prepareSimpleCompletionModelForAgent
 } from "openclaw/plugin-sdk/simple-completion-runtime";
 import { getDB } from "../../core/database.js";
 import { logger } from "../../core/logger.js";
@@ -31,44 +31,6 @@ const CLASSIFIER_SYSTEM_PROMPT = [
 	"禁止输出推理过程、解释、Markdown 或代码块；不要思考展开，只做快速匹配。",
 	"只允许根据用户消息中提供的行业/主题分类字典和股票列表输出纯 JSON 数组。"
 ].join("\n");
-
-function resolveModelRef(modelConfig: unknown): string | undefined {
-	if (typeof modelConfig === "string" && modelConfig.trim()) return modelConfig.trim();
-	if (!modelConfig || typeof modelConfig !== "object" || Array.isArray(modelConfig)) return undefined;
-	const primary = (modelConfig as { primary?: unknown }).primary;
-	return typeof primary === "string" && primary.trim() ? primary.trim() : undefined;
-}
-
-function getConfiguredProviderConfig(cfg: any, provider: string): any | undefined {
-	const providerConfigs = cfg.models?.providers;
-	if (!providerConfigs) return undefined;
-	const exact = providerConfigs[provider];
-	if (exact) return exact;
-	const normalized = provider.trim().toLowerCase();
-	return Object.entries(providerConfigs).find(([key]) => key.trim().toLowerCase() === normalized)?.[1];
-}
-
-function resolveClassifierModelSelection(
-	cfg: any,
-	defaultProvider: string,
-	defaultModel: string
-): { provider: string; model: string } {
-	const agentEntry = ((cfg.agents?.list || []) as any[]).find((agent) => agent?.id === MAIN_AGENT_ID);
-	const primary = resolveModelRef(agentEntry?.model)
-		|| resolveModelRef(cfg.agents?.defaults?.model)
-		|| `${defaultProvider}/${defaultModel}`;
-	const slash = primary.indexOf("/");
-	if (slash > 0) {
-		return {
-			provider: primary.slice(0, slash),
-			model: primary.slice(slash + 1)
-		};
-	}
-	return {
-		provider: defaultProvider,
-		model: primary
-	};
-}
 
 function normalizeStockCodeForCache(stockCode: string, exchange?: string): string {
 	const code = String(stockCode || "")
@@ -445,17 +407,7 @@ export const watchlistLogic = {
 
 	async _callClassifierCompletion(rt: PluginRuntime, sessionId: string, prompt: string, timeoutMs: number): Promise<string> {
 		const cfg = rt.config.loadConfig();
-		const { provider, model } = resolveClassifierModelSelection(cfg, rt.agent.defaults.provider, rt.agent.defaults.model);
 		const maxTokens = resolveClassifierOutputMaxTokens(prompt);
-		const providerAuth = await rt.modelAuth.resolveApiKeyForProvider({ provider, cfg });
-		if (!providerAuth.apiKey) {
-			throw new Error(`No API key found for provider "${provider}".`);
-		}
-		const providerConfigs = cfg.models?.providers;
-		const providerConfig = getConfiguredProviderConfig(cfg, provider);
-		if (!providerConfig) {
-			throw new Error(`No model provider config found for "${provider}".`);
-		}
 		const embeddedCfg = {
 			...cfg,
 			agents: {
@@ -464,26 +416,18 @@ export const watchlistLogic = {
 					...cfg.agents?.defaults,
 					systemPromptOverride: CLASSIFIER_SYSTEM_PROMPT
 				}
-			},
-			models: {
-				...cfg.models,
-				providers: {
-					...providerConfigs,
-					[provider]: {
-						...providerConfig,
-						auth: "api-key" as const,
-						apiKey: providerAuth.apiKey
-					}
-				}
 			}
 		};
-		const prepared = await prepareSimpleCompletionModel({
+		const prepared = await prepareSimpleCompletionModelForAgent({
 			cfg: embeddedCfg,
-			provider,
-			modelId: model
+			agentId: MAIN_AGENT_ID,
+			allowBundledStaticCatalogFallback: true
 		});
 		if ("error" in prepared) {
 			throw new Error(prepared.error);
+		}
+		if (!prepared.auth.apiKey) {
+			throw new Error(`No API key found for provider "${prepared.selection.provider}".`);
 		}
 		const abortController = new AbortController();
 		const abortTimer = setTimeout(() => {

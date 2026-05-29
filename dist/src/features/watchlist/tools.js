@@ -288,7 +288,7 @@ export const watchlistTools = {
                     if (info.changes > 0) {
                         db.prepare("DELETE FROM watchlist_industry_items WHERE watchlistId = ? AND userId = ?").run(args.id, uId);
                         db.prepare("DELETE FROM watchlist_theme_items WHERE watchlistId = ? AND userId = ?").run(args.id, uId);
-                        // 同时删除该自选股关联的所有投研笔记及笔记与资料库的绑定关系
+                        // 同时删除该自选股关联的所有投研笔记及笔记内保存的资料库关联记录
                         db.prepare(`
 							DELETE FROM stock_note_profile_libraries 
 							WHERE userId = ? 
@@ -325,24 +325,16 @@ export const watchlistTools = {
 						FROM watchlist w
 						JOIN ${table} ci ON w.id = ci.watchlistId
 						WHERE w.userId = ? AND w.isDeleted = 0 AND ci.categoryId = ?
-						ORDER BY ci.weight DESC, w.sortOrder ASC
+						ORDER BY w.sortOrder ASC
 					`;
                     params.push(args.categoryId);
                 }
                 else {
                     query = `
-						SELECT w.*, (
-							SELECT MAX(total.weight) FROM (
-								SELECT weight FROM watchlist_industry_items WHERE watchlistId = w.id
-								UNION ALL
-								SELECT weight FROM watchlist_theme_items WHERE watchlistId = w.id
-								UNION ALL
-								SELECT 0 as weight
-							) total
-						) as globalWeight
+						SELECT w.*
 						FROM watchlist w
 						WHERE w.userId = ? AND w.isDeleted = 0
-						ORDER BY globalWeight DESC, w.sortOrder ASC
+						ORDER BY w.sortOrder ASC
 					`;
                 }
                 const stocks = db.prepare(query).all(...params);

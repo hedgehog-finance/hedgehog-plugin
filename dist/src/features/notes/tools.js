@@ -13,8 +13,16 @@ function normalizePagination(args) {
         offset: (page - 1) * pageSize
     };
 }
-function uniqueIds(ids) {
-    return Array.from(new Set((ids || []).map(id => id.trim()).filter(Boolean)));
+function uniqueProfileLibraries(libraries) {
+    const byId = new Map();
+    for (const library of libraries || []) {
+        const id = library.id.trim();
+        const title = library.title.trim();
+        if (id && title && !byId.has(id)) {
+            byId.set(id, title);
+        }
+    }
+    return Array.from(byId, ([id, title]) => ({ id, title }));
 }
 function runInTransaction(db, task) {
     const savepoint = `note_tx_${randomUUID().replace(/-/g, "")}`;
@@ -64,43 +72,13 @@ function resolveWatchlistStock(db, userId, args) {
     }
     return null;
 }
-function getMissingProfileLibraryIds(db, userId, ids) {
-    if (ids.length === 0)
-        return [];
-    const existing = db.prepare(`
-		SELECT id
-		FROM profile_libraries
-		WHERE userId = ? AND id IN (${ids.map(() => "?").join(",")})
-	`).all(userId, ...ids);
-    const existingIds = new Set(existing.map(row => row.id));
-    return ids.filter(id => !existingIds.has(id));
-}
-function ensureProfileLibrariesExist(db, userId, ids) {
-    if (ids.length === 0)
-        return;
-    const missing = getMissingProfileLibraryIds(db, userId, ids);
-    if (missing.length === 0)
-        return;
-    const insert = db.prepare(`
-		INSERT INTO profile_libraries (id, userId, title, createdAt, updatedAt)
-		VALUES (?, ?, ?, STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW'), STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW'))
-		ON CONFLICT(id, userId) DO NOTHING
-	`);
-    for (const id of missing) {
-        const isReport = id.startsWith("report-");
-        const isAnn = id.startsWith("announcement-");
-        const defaultTitle = isReport ? `研报 ${id}` : (isAnn ? `公告 ${id}` : `资料 ${id}`);
-        insert.run(id, userId, defaultTitle);
-    }
-}
 function attachProfileLibraries(db, userId, rows) {
     if (rows.length === 0)
         return [];
     const noteIds = rows.map(row => row.id);
     const libraryRows = db.prepare(`
-		SELECT npl.noteId, pl.id, pl.title
+		SELECT npl.noteId, npl.profileLibraryId AS id, npl.title
 		FROM stock_note_profile_libraries npl
-		JOIN profile_libraries pl ON pl.id = npl.profileLibraryId AND pl.userId = npl.userId
 		WHERE npl.userId = ? AND npl.noteId IN (${noteIds.map(() => "?").join(",")})
 		ORDER BY npl.noteId, npl.createdAt ASC
 	`).all(userId, ...noteIds);
@@ -133,7 +111,7 @@ function successWithPagination(data, page, pageSize, total) {
 export const noteTools = {
     add_stock_note: {
         name: "add_stock_note",
-        description: "新增股票笔记，笔记内容 200 字以内，可关联资料库列表",
+        description: "新增股票笔记，笔记内容 200 字以内，可关联资料库列表；profileLibraryIds 格式为 { id, title }",
         parameters: AddStockNoteParamsSchema,
         registerTool: false,
         execute: async (args, ctx) => {
@@ -145,19 +123,18 @@ export const noteTools = {
                 if (!stock) {
                     return JSON.stringify({ success: false, error: "股票不存在或未在自选列表中" });
                 }
-                const profileLibraryIds = uniqueIds(args.profileLibraryIds);
+                const profileLibraries = uniqueProfileLibraries(args.profileLibraryIds);
                 runInTransaction(db, () => {
-                    ensureProfileLibrariesExist(db, uId, profileLibraryIds);
                     db.prepare(`
 						INSERT INTO stock_notes (id, userId, watchlistId, note)
 						VALUES (?, ?, ?, ?)
 					`).run(id, uId, stock.id, args.note);
                     const insertRelation = db.prepare(`
-						INSERT INTO stock_note_profile_libraries (id, noteId, userId, profileLibraryId)
-						VALUES (?, ?, ?, ?)
+						INSERT INTO stock_note_profile_libraries (id, noteId, userId, profileLibraryId, title)
+						VALUES (?, ?, ?, ?, ?)
 					`);
-                    profileLibraryIds.forEach((profileLibraryId) => {
-                        insertRelation.run(randomUUID(), id, uId, profileLibraryId);
+                    profileLibraries.forEach((profileLibrary) => {
+                        insertRelation.run(randomUUID(), id, uId, profileLibrary.id, profileLibrary.title);
                     });
                 });
                 const row = db.prepare(getNoteSelectSql("sn.id = ? AND sn.userId = ?")).get(id, uId);
@@ -170,7 +147,7 @@ export const noteTools = {
     },
     delete_stock_note: {
         name: "delete_stock_note",
-        description: "删除股票笔记",
+        description: "删除股票笔记，并清理笔记关联资料库记录",
         parameters: DeleteStockNoteParamsSchema,
         registerTool: false,
         execute: async (args, ctx) => {
@@ -191,7 +168,7 @@ export const noteTools = {
     },
     update_stock_note: {
         name: "update_stock_note",
-        description: "修改股票笔记；传入 profileLibraryIds 时会覆盖原有关联资料库列表",
+        description: "修改股票笔记；传入 profileLibraryIds 时会覆盖原有关联资料库列表；profileLibraryIds 格式为 { id, title }",
         parameters: UpdateStockNoteParamsSchema,
         registerTool: false,
         execute: async (args, ctx) => {
@@ -213,11 +190,8 @@ export const noteTools = {
                 if ((args.watchlistId || args.stockCode || args.exchange) && !stock) {
                     return JSON.stringify({ success: false, error: "股票不存在或未在自选列表中" });
                 }
-                const profileLibraryIds = args.profileLibraryIds === undefined ? undefined : uniqueIds(args.profileLibraryIds);
+                const profileLibraries = args.profileLibraryIds === undefined ? undefined : uniqueProfileLibraries(args.profileLibraryIds);
                 runInTransaction(db, () => {
-                    if (profileLibraryIds) {
-                        ensureProfileLibrariesExist(db, uId, profileLibraryIds);
-                    }
                     const updates = ["updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')"];
                     const updateParams = [];
                     if (stock) {
@@ -232,17 +206,17 @@ export const noteTools = {
 						UPDATE stock_notes SET ${updates.join(", ")}
 						WHERE id = ? AND userId = ?
 					`).run(...updateParams, id, uId);
-                    if (profileLibraryIds) {
+                    if (profileLibraries) {
                         db.prepare(`
 							DELETE FROM stock_note_profile_libraries
 							WHERE userId = ? AND noteId = ?
 						`).run(uId, id);
                         const insertRelation = db.prepare(`
-							INSERT INTO stock_note_profile_libraries (id, noteId, userId, profileLibraryId)
-							VALUES (?, ?, ?, ?)
+							INSERT INTO stock_note_profile_libraries (id, noteId, userId, profileLibraryId, title)
+							VALUES (?, ?, ?, ?, ?)
 						`);
-                        profileLibraryIds.forEach((profileLibraryId) => {
-                            insertRelation.run(randomUUID(), id, uId, profileLibraryId);
+                        profileLibraries.forEach((profileLibrary) => {
+                            insertRelation.run(randomUUID(), id, uId, profileLibrary.id, profileLibrary.title);
                         });
                     }
                 });

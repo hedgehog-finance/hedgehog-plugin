@@ -136,6 +136,10 @@ function runStockNotesMigrations(db) {
     if (columns.length > 0 && !columns.some(column => column.name === "watchlistId")) {
         db.prepare("ALTER TABLE stock_notes ADD COLUMN watchlistId TEXT").run();
     }
+    const relationColumns = db.prepare("PRAGMA table_info(stock_note_profile_libraries)").all();
+    if (relationColumns.length > 0 && !relationColumns.some(column => column.name === "title")) {
+        db.prepare("ALTER TABLE stock_note_profile_libraries ADD COLUMN title TEXT NOT NULL DEFAULT ''").run();
+    }
     db.exec("CREATE INDEX IF NOT EXISTS idx_stock_notes_user_stock ON stock_notes(userId, watchlistId, updatedAt DESC)");
 }
 export function getDB() {
@@ -240,6 +244,7 @@ export function getDB() {
 			noteId            TEXT NOT NULL,
 			userId            TEXT NOT NULL,
 			profileLibraryId  TEXT NOT NULL,
+			title             TEXT NOT NULL,
 			createdAt         DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
 			UNIQUE(noteId, userId, profileLibraryId)
 		);
