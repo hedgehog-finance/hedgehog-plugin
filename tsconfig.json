@@ -29,6 +29,7 @@
   },
   "include": [
     "index.ts",
+    "setup-api.ts",
     "src/**/*.ts"
   ]
 }

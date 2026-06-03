@@ -17,8 +17,8 @@ export declare const BatchUpdateSortOrdersParamsSchema: z.ZodObject<{
 }, z.core.$strip>;
 export type BatchUpdateSortOrdersParams = z.infer<typeof BatchUpdateSortOrdersParamsSchema>;
 export declare const AddToWatchlistParamsSchema: z.ZodObject<{
-    stockCode: z.ZodString;
-    stockName: z.ZodString;
+    stock_code: z.ZodString;
+    stock_name: z.ZodString;
     exchange: z.ZodEnum<{
         SSE: "SSE";
         SZSE: "SZSE";
@@ -39,8 +39,8 @@ export declare const AddToWatchlistParamsSchema: z.ZodObject<{
 export type AddToWatchlistParams = z.infer<typeof AddToWatchlistParamsSchema>;
 export declare const BatchAddToWatchlistParamsSchema: z.ZodObject<{
     stocks: z.ZodArray<z.ZodObject<{
-        stockCode: z.ZodString;
-        stockName: z.ZodString;
+        stock_code: z.ZodString;
+        stock_name: z.ZodString;
         exchange: z.ZodEnum<{
             SSE: "SSE";
             SZSE: "SZSE";
@@ -62,14 +62,14 @@ export declare const BatchAddToWatchlistParamsSchema: z.ZodObject<{
 export type BatchAddToWatchlistParams = z.infer<typeof BatchAddToWatchlistParamsSchema>;
 export declare const UpdateWatchlistItemSchema: z.ZodObject<{
     id: z.ZodString;
-    stockName: z.ZodOptional<z.ZodString>;
+    stock_name: z.ZodOptional<z.ZodString>;
     sortOrder: z.ZodOptional<z.ZodNumber>;
 }, z.core.$strip>;
 export type UpdateWatchlistItemParams = z.infer<typeof UpdateWatchlistItemSchema>;
 export interface WatchlistRow {
     id: string;
-    stockCode: string;
-    stockName: string;
+    stock_code: string;
+    stock_name: string;
     exchange: string;
     market?: string;
     userId: string;

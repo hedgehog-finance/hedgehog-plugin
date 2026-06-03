@@ -43,8 +43,8 @@ function getNoteSelectSql(whereSql) {
 		SELECT
 			sn.id,
 			sn.watchlistId,
-			w.stockCode,
-			w.stockName,
+			w.stock_code,
+			w.stock_name,
 			w.exchange,
 			w.market,
 			sn.note,
@@ -58,17 +58,17 @@ function getNoteSelectSql(whereSql) {
 function resolveWatchlistStock(db, userId, args) {
     if (args.watchlistId) {
         return db.prepare(`
-			SELECT id, stockCode, stockName, exchange, market
+			SELECT id, stock_code, stock_name, exchange, market
 			FROM watchlist
 			WHERE id = ? AND userId = ? AND isDeleted = 0
 		`).get(args.watchlistId.trim(), userId) || null;
     }
-    if (args.stockCode && args.exchange) {
+    if (args.stock_code && args.exchange) {
         return db.prepare(`
-			SELECT id, stockCode, stockName, exchange, market
+			SELECT id, stock_code, stock_name, exchange, market
 			FROM watchlist
-			WHERE userId = ? AND stockCode = ? AND exchange = ? AND isDeleted = 0
-		`).get(userId, args.stockCode.trim(), args.exchange) || null;
+			WHERE userId = ? AND stock_code = ? AND exchange = ? AND isDeleted = 0
+		`).get(userId, args.stock_code.trim(), args.exchange) || null;
     }
     return null;
 }
@@ -184,10 +184,10 @@ export const noteTools = {
                 if (!existing) {
                     return JSON.stringify({ success: false, error: "笔记不存在" });
                 }
-                const stock = (args.watchlistId || args.stockCode || args.exchange)
+                const stock = (args.watchlistId || args.stock_code || args.exchange)
                     ? resolveWatchlistStock(db, uId, args)
                     : null;
-                if ((args.watchlistId || args.stockCode || args.exchange) && !stock) {
+                if ((args.watchlistId || args.stock_code || args.exchange) && !stock) {
                     return JSON.stringify({ success: false, error: "股票不存在或未在自选列表中" });
                 }
                 const profileLibraries = args.profileLibraryIds === undefined ? undefined : uniqueProfileLibraries(args.profileLibraryIds);
@@ -261,9 +261,9 @@ export const noteTools = {
                     conditions.push("sn.watchlistId = ?");
                     params.push(args.watchlistId);
                 }
-                if (args.stockCode) {
-                    conditions.push("w.stockCode = ?");
-                    params.push(args.stockCode);
+                if (args.stock_code) {
+                    conditions.push("w.stock_code = ?");
+                    params.push(args.stock_code);
                 }
                 if (args.exchange) {
                     conditions.push("w.exchange = ?");
@@ -272,7 +272,7 @@ export const noteTools = {
                 const keyword = args.keyword?.trim();
                 if (keyword) {
                     const pattern = `%${escapeLikePattern(keyword)}%`;
-                    conditions.push("(w.stockCode LIKE ? ESCAPE '\\' OR w.stockName LIKE ? ESCAPE '\\' OR sn.note LIKE ? ESCAPE '\\')");
+                    conditions.push("(w.stock_code LIKE ? ESCAPE '\\' OR w.stock_name LIKE ? ESCAPE '\\' OR sn.note LIKE ? ESCAPE '\\')");
                     params.push(pattern, pattern, pattern);
                 }
                 const whereSql = conditions.join(" AND ");

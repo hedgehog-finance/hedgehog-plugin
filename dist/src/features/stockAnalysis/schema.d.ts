@@ -1,27 +1,27 @@
 import { z } from "openclaw/plugin-sdk/zod";
 export declare const GetStockAiAnalysisParamsSchema: z.ZodObject<{
-    stockCode: z.ZodString;
+    stock_code: z.ZodString;
     market: z.ZodDefault<z.ZodString>;
 }, z.core.$strip>;
 export type GetStockAiAnalysisParams = z.infer<typeof GetStockAiAnalysisParamsSchema>;
 export declare const QueryStockAiAnalysisHistoryParamsSchema: z.ZodObject<{
-    stockCode: z.ZodString;
+    stock_code: z.ZodString;
     market: z.ZodDefault<z.ZodString>;
     page: z.ZodDefault<z.ZodNumber>;
     pageSize: z.ZodDefault<z.ZodNumber>;
 }, z.core.$strip>;
 export type QueryStockAiAnalysisHistoryParams = z.infer<typeof QueryStockAiAnalysisHistoryParamsSchema>;
 export declare const SaveStockAiAnalysisParamsSchema: z.ZodObject<{
-    stockCode: z.ZodString;
-    stockName: z.ZodString;
+    stock_code: z.ZodString;
+    stock_name: z.ZodString;
     market: z.ZodDefault<z.ZodString>;
     content: z.ZodString;
 }, z.core.$strip>;
 export type SaveStockAiAnalysisParams = z.infer<typeof SaveStockAiAnalysisParamsSchema>;
 export interface StockAiAnalysis {
     id: string;
-    stockCode: string;
-    stockName: string;
+    stock_code: string;
+    stock_name: string;
     market: string;
     content: string;
     createdAt: string;

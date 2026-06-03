@@ -1,7 +1,34 @@
 import { defineChannelPluginEntry } from "openclaw/plugin-sdk/channel-core";
+import { jsonResult, type AnyAgentTool, type OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import { hedgehogFinancePlugin } from "./src/channel.js";
 import { setHedgehogRuntime } from "./src/runtime.js";
 import { allFeaturesTools } from "./src/features/index.js";
+
+const registeredToolApis = new WeakSet<OpenClawPluginApi>();
+
+function registerFeatureTools(api: OpenClawPluginApi): void {
+	if (registeredToolApis.has(api)) return;
+	registeredToolApis.add(api);
+
+	Object.entries(allFeaturesTools).forEach(([name, tool]) => {
+		if (tool.registerTool === false) return;
+		const registerable: AnyAgentTool = {
+			name,
+			label: tool.label || tool.description,
+			description: tool.description,
+			parameters: tool.parameters as any,
+			async execute(_toolCallId, params) {
+				const result = await tool.execute(params);
+				try {
+					return jsonResult(JSON.parse(result));
+				} catch {
+					return jsonResult({ success: true, data: result });
+				}
+			}
+		};
+		api.registerTool(registerable, { name });
+	});
+}
 
 export default defineChannelPluginEntry({
 	id: "hedgehog_finance",
@@ -11,11 +38,11 @@ export default defineChannelPluginEntry({
 	setRuntime(runtime) {
 		setHedgehogRuntime(runtime);
 	},
+	registerCliMetadata(api) {
+		registerFeatureTools(api);
+	},
 	registerFull(api) {
-		Object.entries(allFeaturesTools).forEach(([name, tool]) => {
-			if (tool.registerTool === false) return;
-			const registerable = { ...tool, label: tool.description };
-			api.registerTool(registerable as any, { name });
-		});
+		setHedgehogRuntime(api.runtime);
+		registerFeatureTools(api);
 	},
 });

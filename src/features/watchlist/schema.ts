@@ -21,8 +21,8 @@ const ExchangeEnum = z.enum(["SSE", "SZSE", "NASDAQ", "NYSE", "AMEX", "HKEX"]);
 const MarketEnum = z.enum(["A_SHARE", "US_SHARE", "HK_SHARE", "FUTURES", "FUND", "OTHER"]);
 
 export const AddToWatchlistParamsSchema = z.object({
-	stockCode: z.string(),
-	stockName: z.string(),
+	stock_code: z.string(),
+	stock_name: z.string(),
 	exchange: ExchangeEnum,
 	market: MarketEnum
 });
@@ -37,15 +37,15 @@ export type BatchAddToWatchlistParams = z.infer<typeof BatchAddToWatchlistParams
 
 export const UpdateWatchlistItemSchema = z.object({
 	id: z.string(),
-	stockName: z.string().optional(),
+	stock_name: z.string().optional(),
 	sortOrder: z.number().optional()
 });
 export type UpdateWatchlistItemParams = z.infer<typeof UpdateWatchlistItemSchema>;
 
 export interface WatchlistRow {
 	id: string;
-	stockCode: string;
-	stockName: string;
+	stock_code: string;
+	stock_name: string;
 	exchange: string;
 	market?: string;
 	userId: string;

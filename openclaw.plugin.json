@@ -6,6 +6,23 @@
   ],
   "name": "Hedgehog Finance Comprehensive Plugin",
   "description": "WebSocket Channel & Watchlist SQLite Tools for Hedgehog App",
+  "contracts": {
+    "tools": [
+      "get_watchlist",
+      "save_daily_morning_briefing"
+    ]
+  },
+  "setup": {
+    "configMigrations": [
+      "daily_morning_briefing_agent_tools"
+    ]
+  },
+  "configContracts": {
+    "compatibilityMigrationPaths": [
+      "agents",
+      "plugins.entries.hedgehog_finance"
+    ]
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

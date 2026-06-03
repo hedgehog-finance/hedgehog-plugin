@@ -23,6 +23,15 @@ import {
 
 let watchlistMutationQueue: Promise<void> = Promise.resolve();
 
+const GetWatchlistAgentToolSchema = {
+	type: "object",
+	additionalProperties: false,
+	properties: {
+		categoryId: { type: "string", description: "分类 ID，不传返回所有" },
+		categoryType: { type: "string", enum: ["industry", "theme"], description: "分类类型" }
+	}
+};
+
 function enqueueWatchlistMutation<T>(task: () => Promise<T>): Promise<T> {
 	const previous = watchlistMutationQueue;
 	let release!: () => void;
@@ -47,12 +56,12 @@ function normalizeTags(input: { name: string; weight?: number } | { name: string
 function normalizeWatchlistStock(stock: AddToWatchlistParams): AddToWatchlistParams {
 	return {
 		...stock,
-		stockCode: watchlistLogic._normalizeStockCodeForCache(stock.stockCode, stock.exchange)
+		stock_code: watchlistLogic._normalizeStockCodeForCache(stock.stock_code, stock.exchange)
 	};
 }
 
 function watchlistStockKey(stock: AddToWatchlistParams): string {
-	return `${watchlistLogic._normalizeStockCodeForCache(stock.stockCode, stock.exchange)}:${stock.exchange}`;
+	return `${watchlistLogic._normalizeStockCodeForCache(stock.stock_code, stock.exchange)}:${stock.exchange}`;
 }
 
 function updateWatchlistTags(
@@ -96,23 +105,89 @@ function upsertStockClassificationCache(
 		theme?: { name: string; weight?: number }[];
 	}
 ) {
-	const cacheCode = watchlistLogic._normalizeStockCodeForCache(stock.stockCode, stock.exchange);
-	const legacyCode = stock.stockCode.trim().toUpperCase().replace(/\.(SH|SS|SZ|HK|US)$/i, "");
+	const cacheCode = watchlistLogic._normalizeStockCodeForCache(stock.stock_code, stock.exchange);
+	const legacyCode = stock.stock_code.trim().toUpperCase().replace(/\.(SH|SS|SZ|HK|US)$/i, "");
 	db.prepare(`
-		INSERT OR REPLACE INTO global_stock_metadata (stockCode, exchange, stockName, industryJson, themeJson)
+		INSERT OR REPLACE INTO global_stock_metadata (stock_code, exchange, stock_name, industryJson, themeJson)
 		VALUES (?, ?, ?, ?, ?)
 	`).run(
 		cacheCode,
 		stock.exchange,
-		stock.stockName,
+		stock.stock_name,
 		JSON.stringify(classification.industry),
 		JSON.stringify(classification.theme || [])
 	);
 	if (legacyCode && legacyCode !== cacheCode) {
 		db.prepare(`
-			DELETE FROM global_stock_metadata WHERE stockCode = ? AND exchange = ?
+			DELETE FROM global_stock_metadata WHERE stock_code = ? AND exchange = ?
 		`).run(legacyCode, stock.exchange);
 	}
+}
+
+function readWatchlistRows(db: DatabaseSync, args: GetWatchlistParams, userId?: string): WatchlistRow[] {
+	let query: string;
+	const params: any[] = [];
+
+	if (userId) {
+		params.push(userId);
+		if (args.categoryId && args.categoryType) {
+			const table = args.categoryType === "industry" ? "watchlist_industry_items" : "watchlist_theme_items";
+			query = `
+				SELECT w.*, ci.weight as relWeight
+				FROM watchlist w
+				JOIN ${table} ci ON w.id = ci.watchlistId
+				WHERE w.userId = ? AND w.isDeleted = 0 AND ci.categoryId = ?
+				ORDER BY w.sortOrder ASC
+			`;
+			params.push(args.categoryId);
+		} else {
+			query = `
+				SELECT w.*
+				FROM watchlist w
+				WHERE w.userId = ? AND w.isDeleted = 0
+				ORDER BY w.sortOrder ASC
+			`;
+		}
+	} else if (args.categoryId && args.categoryType) {
+		const table = args.categoryType === "industry" ? "watchlist_industry_items" : "watchlist_theme_items";
+		query = `
+			SELECT w.*, ci.weight as relWeight
+			FROM watchlist w
+			JOIN ${table} ci ON w.id = ci.watchlistId
+			WHERE w.isDeleted = 0 AND ci.categoryId = ?
+			ORDER BY w.userId ASC, w.sortOrder ASC
+		`;
+		params.push(args.categoryId);
+	} else {
+		query = `
+			SELECT w.*
+			FROM watchlist w
+			WHERE w.isDeleted = 0
+			ORDER BY w.userId ASC, w.sortOrder ASC
+		`;
+	}
+
+	return db.prepare(query).all(...params) as WatchlistRow[];
+}
+
+function attachWatchlistTags(db: DatabaseSync, stocks: WatchlistRow[]) {
+	return stocks.map(stock => {
+		const industries = db.prepare(`
+			SELECT c.name FROM watchlist_categories c
+			JOIN watchlist_industry_items i ON c.id = i.categoryId
+			WHERE i.watchlistId = ? ORDER BY i.weight DESC
+		`).all(stock.id) as { name: string }[];
+		const themes = db.prepare(`
+			SELECT c.name FROM watchlist_categories c
+			JOIN watchlist_theme_items t ON c.id = t.categoryId
+			WHERE t.watchlistId = ? ORDER BY t.weight DESC
+		`).all(stock.id) as { name: string }[];
+		return {
+			...stock,
+			industries: industries.map(i => i.name),
+			themes: themes.map(t => t.name)
+		};
+	});
 }
 
 export const watchlistTools = {
@@ -129,8 +204,8 @@ export const watchlistTools = {
 				}
 				const db = getDB();
 				const stock = normalizeWatchlistStock(args);
-				const existingBeforeClassify = db.prepare("SELECT id, isDeleted FROM watchlist WHERE userId = ? AND stockCode = ? AND exchange = ?")
-					.get(uId, stock.stockCode, stock.exchange) as WatchlistRow | undefined;
+				const existingBeforeClassify = db.prepare("SELECT id, isDeleted FROM watchlist WHERE userId = ? AND stock_code = ? AND exchange = ?")
+					.get(uId, stock.stock_code, stock.exchange) as WatchlistRow | undefined;
 				if (existingBeforeClassify?.isDeleted === 0) {
 					return JSON.stringify({ success: true, skipped: true, reason: "duplicate", id: existingBeforeClassify.id });
 				}
@@ -142,7 +217,7 @@ export const watchlistTools = {
 
 				let classification: Awaited<ReturnType<typeof watchlistLogic.getStockClassification>>;
 				try {
-					classification = await watchlistLogic.getStockClassification(ctx.runtime, stock.stockName, stock.stockCode, stock.exchange, uId);
+					classification = await watchlistLogic.getStockClassification(ctx.runtime, stock.stock_name, stock.stock_code, stock.exchange, uId);
 				} catch (e: any) {
 					return JSON.stringify({ success: false, error: e.message });
 				}
@@ -157,14 +232,14 @@ export const watchlistTools = {
 					const nextOrder = (sortRow?.max ?? 0) + 1024;
 
 					let watchlistId: string;
-					const existingItem = db.prepare("SELECT id, isDeleted FROM watchlist WHERE userId = ? AND stockCode = ? AND exchange = ?").get(uId, stock.stockCode, stock.exchange) as WatchlistRow | undefined;
+					const existingItem = db.prepare("SELECT id, isDeleted FROM watchlist WHERE userId = ? AND stock_code = ? AND exchange = ?").get(uId, stock.stock_code, stock.exchange) as WatchlistRow | undefined;
 
 					if (existingItem) {
 						watchlistId = existingItem.id;
 						if (existingItem.isDeleted === 1) {
 							db.prepare(`
-								UPDATE watchlist SET isDeleted = 0, stockName = ?, sortOrder = ?, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW') WHERE id = ?
-							`).run(stock.stockName, nextOrder, watchlistId);
+								UPDATE watchlist SET isDeleted = 0, stock_name = ?, sortOrder = ?, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW') WHERE id = ?
+							`).run(stock.stock_name, nextOrder, watchlistId);
 						} else {
 							db.exec("ROLLBACK");
 							return JSON.stringify({ success: true, skipped: true, reason: "duplicate", id: watchlistId });
@@ -172,9 +247,9 @@ export const watchlistTools = {
 					} else {
 						watchlistId = randomUUID();
 						db.prepare(`
-							INSERT INTO watchlist (id, userId, stockCode, stockName, exchange, market, sortOrder)
+							INSERT INTO watchlist (id, userId, stock_code, stock_name, exchange, market, sortOrder)
 							VALUES (?, ?, ?, ?, ?, ?, ?)
-						`).run(watchlistId, uId, stock.stockCode, stock.stockName, stock.exchange, stock.market, nextOrder);
+						`).run(watchlistId, uId, stock.stock_code, stock.stock_name, stock.exchange, stock.market, nextOrder);
 					}
 
 					upsertStockClassificationCache(db, stock, classification);
@@ -207,12 +282,12 @@ export const watchlistTools = {
 				const uId = String(ctx.userId);
 				const uniqueStocks: AddToWatchlistParams[] = [];
 				const inputSeen = new Set<string>();
-				const skipped: { stockCode: string; exchange: string; reason: "input_duplicate" | "duplicate"; id?: string }[] = [];
+				const skipped: { stock_code: string; exchange: string; reason: "input_duplicate" | "duplicate"; id?: string }[] = [];
 				for (const rawStock of args.stocks) {
 					const stock = normalizeWatchlistStock(rawStock);
 					const key = watchlistStockKey(stock);
 					if (inputSeen.has(key)) {
-						skipped.push({ stockCode: stock.stockCode, exchange: stock.exchange, reason: "input_duplicate" });
+						skipped.push({ stock_code: stock.stock_code, exchange: stock.exchange, reason: "input_duplicate" });
 						continue;
 					}
 					inputSeen.add(key);
@@ -220,10 +295,10 @@ export const watchlistTools = {
 				}
 				const stocksToAdd: AddToWatchlistParams[] = [];
 				for (const stock of uniqueStocks) {
-					const existing = db.prepare("SELECT id, isDeleted FROM watchlist WHERE userId = ? AND stockCode = ? AND exchange = ?")
-						.get(uId, stock.stockCode, stock.exchange) as WatchlistRow | undefined;
+					const existing = db.prepare("SELECT id, isDeleted FROM watchlist WHERE userId = ? AND stock_code = ? AND exchange = ?")
+						.get(uId, stock.stock_code, stock.exchange) as WatchlistRow | undefined;
 					if (existing?.isDeleted === 0) {
-						skipped.push({ stockCode: stock.stockCode, exchange: stock.exchange, reason: "duplicate", id: existing.id });
+						skipped.push({ stock_code: stock.stock_code, exchange: stock.exchange, reason: "duplicate", id: existing.id });
 					} else {
 						stocksToAdd.push(stock);
 					}
@@ -246,7 +321,7 @@ export const watchlistTools = {
 				} catch (e: any) {
 					logger.warn({
 						count: stocksToAdd.length,
-						codes: stocksToAdd.map(stock => stock.stockCode),
+						codes: stocksToAdd.map(stock => stock.stock_code),
 						error: e.message || String(e)
 					}, "[Watchlist] batch_add_to_watchlist classification failed");
 					return JSON.stringify({
@@ -269,28 +344,28 @@ export const watchlistTools = {
 						currentMaxOrder = nextOrder;
 						const classification = batchResults[i];
 						if (!classification) {
-							throw new Error(`行业/主题关系分析失败: ${stock.stockName}`);
+							throw new Error(`行业/主题关系分析失败: ${stock.stock_name}`);
 						}
 
 						let watchlistId: string;
-						const existingItem = db.prepare("SELECT id, isDeleted FROM watchlist WHERE userId = ? AND stockCode = ? AND exchange = ?").get(uId, stock.stockCode, stock.exchange) as WatchlistRow | undefined;
+						const existingItem = db.prepare("SELECT id, isDeleted FROM watchlist WHERE userId = ? AND stock_code = ? AND exchange = ?").get(uId, stock.stock_code, stock.exchange) as WatchlistRow | undefined;
 
 						if (existingItem) {
 							watchlistId = existingItem.id;
 							if (existingItem.isDeleted === 1) {
 								db.prepare(`
-									UPDATE watchlist SET isDeleted = 0, stockName = ?, sortOrder = ?, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW') WHERE id = ?
-								`).run(stock.stockName, nextOrder, watchlistId);
+									UPDATE watchlist SET isDeleted = 0, stock_name = ?, sortOrder = ?, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW') WHERE id = ?
+								`).run(stock.stock_name, nextOrder, watchlistId);
 							} else {
-								skipped.push({ stockCode: stock.stockCode, exchange: stock.exchange, reason: "duplicate", id: watchlistId });
+								skipped.push({ stock_code: stock.stock_code, exchange: stock.exchange, reason: "duplicate", id: watchlistId });
 								return;
 							}
 						} else {
 							watchlistId = randomUUID();
 							db.prepare(`
-								INSERT INTO watchlist (id, userId, stockCode, stockName, exchange, market, sortOrder)
+								INSERT INTO watchlist (id, userId, stock_code, stock_name, exchange, market, sortOrder)
 								VALUES (?, ?, ?, ?, ?, ?, ?)
-							`).run(watchlistId, uId, stock.stockCode, stock.stockName, stock.exchange, stock.market, nextOrder);
+							`).run(watchlistId, uId, stock.stock_code, stock.stock_name, stock.exchange, stock.market, nextOrder);
 						}
 						results.push(watchlistId);
 						writtenItems.push({ id: watchlistId, stock, classification });
@@ -361,52 +436,14 @@ export const watchlistTools = {
 	get_watchlist: {
 		name: "get_watchlist",
 		description: "获取自选股列表",
-		parameters: GetWatchlistParamsSchema,
-		registerTool: false,
-		execute: async (args: GetWatchlistParams, ctx: { userId: string }) => {
+		parameters: GetWatchlistAgentToolSchema,
+		registerTool: true,
+		execute: async (rawArgs: GetWatchlistParams, ctx?: { userId: string }) => {
 			try {
+				const args = GetWatchlistParamsSchema.parse(rawArgs ?? {});
 				const db = getDB();
-				const uId = String(ctx.userId);
-				let query: string;
-				let params: any[] = [uId];
-
-				if (args.categoryId && args.categoryType) {
-					const table = args.categoryType === "industry" ? "watchlist_industry_items" : "watchlist_theme_items";
-					query = `
-						SELECT w.*, ci.weight as relWeight
-						FROM watchlist w
-						JOIN ${table} ci ON w.id = ci.watchlistId
-						WHERE w.userId = ? AND w.isDeleted = 0 AND ci.categoryId = ?
-						ORDER BY w.sortOrder ASC
-					`;
-					params.push(args.categoryId);
-				} else {
-					query = `
-						SELECT w.*
-						FROM watchlist w
-						WHERE w.userId = ? AND w.isDeleted = 0
-						ORDER BY w.sortOrder ASC
-					`;
-				}
-
-				const stocks = db.prepare(query).all(...params) as WatchlistRow[];
-				const fullList = stocks.map(stock => {
-					const industries = db.prepare(`
-						SELECT c.name FROM watchlist_categories c
-						JOIN watchlist_industry_items i ON c.id = i.categoryId
-						WHERE i.watchlistId = ? ORDER BY i.weight DESC
-					`).all(stock.id) as { name: string }[];
-					const themes = db.prepare(`
-						SELECT c.name FROM watchlist_categories c
-						JOIN watchlist_theme_items t ON c.id = t.categoryId
-						WHERE t.watchlistId = ? ORDER BY t.weight DESC
-					`).all(stock.id) as { name: string }[];
-					return {
-						...stock,
-						industries: industries.map(i => i.name),
-						themes: themes.map(t => t.name)
-					};
-				});
+				const stocks = readWatchlistRows(db, args, ctx?.userId ? String(ctx.userId) : undefined);
+				const fullList = attachWatchlistTags(db, stocks);
 				return JSON.stringify({ success: true, data: fullList });
 			} catch (e: any) {
 				return JSON.stringify({ success: false, error: e.message });
@@ -424,14 +461,14 @@ export const watchlistTools = {
 				const db = getDB();
 				const uId = String(ctx.userId);
 				const industryData = db.prepare(`
-					SELECT c.name as category_name, i.weight, w.stockCode
+					SELECT c.name as category_name, i.weight, w.stock_code
 					FROM watchlist_categories c
 					JOIN watchlist_industry_items i ON c.id = i.categoryId
 					JOIN watchlist w ON i.watchlistId = w.id
 					WHERE i.userId = ? AND w.isDeleted = 0
 				`).all(uId) as any[];
 				const themeData = db.prepare(`
-					SELECT c.name as category_name, t.weight, w.stockCode
+					SELECT c.name as category_name, t.weight, w.stock_code
 					FROM watchlist_categories c
 					JOIN watchlist_theme_items t ON c.id = t.categoryId
 					JOIN watchlist w ON t.watchlistId = w.id
@@ -443,8 +480,8 @@ export const watchlistTools = {
 					const name = item.category_name;
 					const existing: { category_name: string, weight_total: number, stocks: string[] } = aggMap.get(name) || { category_name: name, weight_total: 0, stocks: [] };
 					existing.weight_total += (item.weight || 0);
-					if (!existing.stocks.includes(item.stockCode)) {
-						existing.stocks.push(item.stockCode);
+					if (!existing.stocks.includes(item.stock_code)) {
+						existing.stocks.push(item.stock_code);
 					}
 					aggMap.set(name, existing);
 				});
@@ -501,14 +538,14 @@ export const watchlistTools = {
 			const db = getDB();
 			const uId = String(ctx.userId);
 			try {
-				const stocks = db.prepare("SELECT stockCode as code, stockName as name FROM watchlist WHERE userId = ? AND isDeleted = 0").all(uId) as any[];
+				const stocks = db.prepare("SELECT stock_code as code, stock_name as name FROM watchlist WHERE userId = ? AND isDeleted = 0").all(uId) as any[];
 				if (stocks.length === 0) return JSON.stringify({ success: true, message: "没有可排序的股票" });
 				const sortedResults = await watchlistLogic.applySmartSort(ctx.runtime, `sort-${uId}`, stocks);
 				if (sortedResults.length > 0) {
 					db.exec("BEGIN TRANSACTION");
 					const stmt = db.prepare(`
 						UPDATE watchlist SET sortOrder = ?, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
-						WHERE userId = ? AND stockCode = ? AND isDeleted = 0
+						WHERE userId = ? AND stock_code = ? AND isDeleted = 0
 					`);
 					sortedResults.forEach((item: any, i: number) => {
 						const currentOrder = i * 10;
@@ -598,7 +635,7 @@ export const watchlistTools = {
 			const db = getDB();
 			const uId = String(ctx.userId);
 			try {
-				const stocks = db.prepare("SELECT stockName, stockCode, exchange, market FROM watchlist WHERE userId = ? AND isDeleted = 0").all(uId) as any[];
+				const stocks = db.prepare("SELECT stock_name, stock_code, exchange, market FROM watchlist WHERE userId = ? AND isDeleted = 0").all(uId) as any[];
 				if (stocks.length > 30) {
 					return JSON.stringify({ success: false, error: "自选股数量超过 30 只，暂不支持批量重置分类" });
 				}
@@ -615,15 +652,15 @@ export const watchlistTools = {
 						db.prepare("DELETE FROM watchlist_industry_items WHERE userId = ?").run(uId);
 						db.prepare("DELETE FROM watchlist_theme_items WHERE userId = ?").run(uId);
 
-						const userStocks = db.prepare("SELECT id, stockCode, exchange FROM watchlist WHERE userId = ? AND isDeleted = 0").all(uId) as any[];
+						const userStocks = db.prepare("SELECT id, stock_code, exchange FROM watchlist WHERE userId = ? AND isDeleted = 0").all(uId) as any[];
 						batchResults.forEach((res, i) => {
 							if (res) {
 								const s = stocks[i];
-								const match = userStocks.find(us => us.stockCode === s.stockCode && us.exchange === s.exchange);
+								const match = userStocks.find(us => us.stock_code === s.stock_code && us.exchange === s.exchange);
 								if (match) {
 									upsertStockClassificationCache(db, {
-										stockName: s.stockName,
-										stockCode: s.stockCode,
+										stock_name: s.stock_name,
+										stock_code: s.stock_code,
 										exchange: s.exchange,
 										market: s.market
 									}, res);

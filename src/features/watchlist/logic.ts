@@ -12,7 +12,7 @@ import { StockClassification, StockClassificationSchema } from "../../types.js";
 interface GlobalStockMetadataRow {
 	industryJson: string;
 	themeJson: string;
-	stockName: string;
+	stock_name: string;
 	lastUpdated: string;
 }
 
@@ -32,8 +32,8 @@ const CLASSIFIER_SYSTEM_PROMPT = [
 	"只允许根据用户消息中提供的行业/主题分类字典和股票列表输出纯 JSON 数组。"
 ].join("\n");
 
-function normalizeStockCodeForCache(stockCode: string, exchange?: string): string {
-	const code = String(stockCode || "")
+function normalizeStockCodeForCache(stock_code: string, exchange?: string): string {
+	const code = String(stock_code || "")
 		.trim()
 		.toUpperCase();
 	if (/\.(SH|SS|SZ|HK|US)$/i.test(code)) {
@@ -51,19 +51,19 @@ function normalizeStockCodeForCache(stockCode: string, exchange?: string): strin
 	}
 }
 
-function legacyStockCodeWithoutSuffix(stockCode: string): string {
-	return String(stockCode || "")
+function legacyStockCodeWithoutSuffix(stock_code: string): string {
+	return String(stock_code || "")
 		.trim()
 		.toUpperCase()
 		.replace(/\.(SH|SS|SZ|HK|US)$/i, "");
 }
 
-function getCachedClassificationRow(db: any, stockCode: string, exchange: string): GlobalStockMetadataRow | undefined {
-	const cacheCode = normalizeStockCodeForCache(stockCode, exchange);
-	const legacyCode = legacyStockCodeWithoutSuffix(stockCode);
+function getCachedClassificationRow(db: any, stock_code: string, exchange: string): GlobalStockMetadataRow | undefined {
+	const cacheCode = normalizeStockCodeForCache(stock_code, exchange);
+	const legacyCode = legacyStockCodeWithoutSuffix(stock_code);
 	const stmt = db.prepare(`
 		SELECT industryJson, themeJson FROM global_stock_metadata
-		WHERE stockCode = ? AND exchange = ?
+		WHERE stock_code = ? AND exchange = ?
 	`);
 	return (stmt.get(cacheCode, exchange) || (legacyCode !== cacheCode ? stmt.get(legacyCode, exchange) : undefined)) as GlobalStockMetadataRow | undefined;
 }
@@ -180,14 +180,14 @@ export const watchlistLogic = {
 
 	async getStockClassification(
 		rt: PluginRuntime,
-		stockName: string,
-		stockCode: string,
+		stock_name: string,
+		stock_code: string,
 		exchange: string,
 		_userId: string
 	): Promise<StockClassification | null> {
 		const db = getDB();
 
-		const cached = getCachedClassificationRow(db, stockCode, exchange);
+		const cached = getCachedClassificationRow(db, stock_code, exchange);
 
 		if (cached && cached.industryJson) {
 			try {
@@ -200,7 +200,7 @@ export const watchlistLogic = {
 			}
 		}
 
-		const classification = await watchlistLogic._autoClassifyWithAI(rt, stockName, stockCode, exchange);
+		const classification = await watchlistLogic._autoClassifyWithAI(rt, stock_name, stock_code, exchange);
 
 		return classification;
 	},
@@ -212,10 +212,10 @@ export const watchlistLogic = {
 	): Promise<StockClassification[]> {
 		const db = getDB();
 		const results = new Array<StockClassification | null>(stocks.length).fill(null);
-		const pendingStocks: { idx: number, stockName: string, stockCode: string, exchange: string }[] = [];
+		const pendingStocks: { idx: number, stock_name: string, stock_code: string, exchange: string }[] = [];
 
 		stocks.forEach((stock, idx) => {
-			const cached = getCachedClassificationRow(db, stock.stockCode, stock.exchange);
+			const cached = getCachedClassificationRow(db, stock.stock_code, stock.exchange);
 
 			if (cached && cached.industryJson) {
 				try {
@@ -231,8 +231,8 @@ export const watchlistLogic = {
 
 			pendingStocks.push({
 				idx,
-				stockName: stock.stockName,
-				stockCode: stock.stockCode,
+				stock_name: stock.stock_name,
+				stock_code: stock.stock_code,
 				exchange: stock.exchange
 			});
 		});
@@ -246,7 +246,7 @@ export const watchlistLogic = {
 			throw new Error("行业分类字典为空，无法分析行业/主题关系");
 		}
 
-		const stocksList = pendingStocks.map(s => `- ${s.stockName} (${s.stockCode})`).join("\n");
+		const stocksList = pendingStocks.map(s => `- ${s.stock_name} (${s.stock_code})`).join("\n");
 		const prompt = watchlistLogic._buildAiPrompt(cats.industries, cats.themes, stocksList, true);
 		const sessionId = `classify-batch-${randomUUID()}`;
 		const aiText = await watchlistLogic._callClassifierAi(rt, sessionId, prompt, resolveBatchClassificationTimeoutMs(pendingStocks.length));
@@ -256,7 +256,7 @@ export const watchlistLogic = {
 		} catch (e) {
 			logger.warn({
 				err: e instanceof Error ? e.message : String(e),
-				pendingCodes: pendingStocks.map(stock => stock.stockCode),
+				pendingCodes: pendingStocks.map(stock => stock.stock_code),
 				aiTextLength: aiText.length,
 				aiText
 			}, "[Watchlist] batch classification AI parse failed");
@@ -271,16 +271,16 @@ export const watchlistLogic = {
 		let parsedResults: { stock: typeof pendingStocks[number]; data: StockClassification }[];
 		try {
 			parsedResults = pendingStocks.map((stock, i) => {
-				const raw = parsedByCode.get(String(stock.stockCode)) || parsed[i];
+				const raw = parsedByCode.get(String(stock.stock_code)) || parsed[i];
 				return {
 					stock,
-					data: watchlistLogic._parseClassification(raw, cats, stock.stockName || stock.stockCode)
+					data: watchlistLogic._parseClassification(raw, cats, stock.stock_name || stock.stock_code)
 				};
 			});
 		} catch (e) {
 			logger.warn({
 				err: e instanceof Error ? e.message : String(e),
-				pendingCodes: pendingStocks.map(stock => stock.stockCode),
+				pendingCodes: pendingStocks.map(stock => stock.stock_code),
 				aiTextLength: aiText.length,
 				aiText
 			}, "[Watchlist] batch classification AI semantic parse failed");
@@ -293,7 +293,7 @@ export const watchlistLogic = {
 
 		const missing = stocks.find((_, i) => !results[i]);
 		if (missing) {
-			throw new Error(`行业/主题关系分析失败: ${missing.stockName || missing.stockCode}`);
+			throw new Error(`行业/主题关系分析失败: ${missing.stock_name || missing.stock_code}`);
 		}
 		return results as StockClassification[];
 	},
@@ -310,7 +310,7 @@ export const watchlistLogic = {
 		stocks.forEach((s, i) => {
 			const cached = options.forceRefresh
 				? undefined
-				: getCachedClassificationRow(db, s.stockCode, s.exchange);
+				: getCachedClassificationRow(db, s.stock_code, s.exchange);
 			if (cached && cached.industryJson) {
 				try {
 					results[i] = watchlistLogic._normalizeCachedClassification({
@@ -319,10 +319,10 @@ export const watchlistLogic = {
 						weight: 50
 					});
 				} catch (e) {
-					pendingStocks.push({ idx: i, name: s.stockName, code: s.stockCode, exchange: s.exchange });
+					pendingStocks.push({ idx: i, name: s.stock_name, code: s.stock_code, exchange: s.exchange });
 				}
 			} else {
-				pendingStocks.push({ idx: i, name: s.stockName, code: s.stockCode, exchange: s.exchange });
+				pendingStocks.push({ idx: i, name: s.stock_name, code: s.stock_code, exchange: s.exchange });
 			}
 		});
 		if (pendingStocks.length > 0) {
@@ -362,7 +362,7 @@ export const watchlistLogic = {
 		if (options.requireComplete) {
 			const missing = stocks.find((_, i) => !results[i]);
 			if (missing) {
-				throw new Error(`行业/主题关系分析失败: ${missing.stockName || missing.stockCode}`);
+				throw new Error(`行业/主题关系分析失败: ${missing.stock_name || missing.stock_code}`);
 			}
 		}
 		return results;
@@ -379,8 +379,8 @@ export const watchlistLogic = {
 
 	async _autoClassifyWithAI(
 		rt: PluginRuntime,
-		stockName: string,
-		stockCode: string,
+		stock_name: string,
+		stock_code: string,
 		exchange: string
 	): Promise<StockClassification | null> {
 		const db = getDB();
@@ -390,17 +390,17 @@ export const watchlistLogic = {
 			return null;
 		}
 
-		const prompt = watchlistLogic._buildAiPrompt(cats.industries, cats.themes, `${stockName} (${stockCode})`, false);
-		const aiText = await watchlistLogic._callClassifierAi(rt, `classify-${stockCode}`, prompt, SINGLE_CLASSIFICATION_TIMEOUT_MS);
+		const prompt = watchlistLogic._buildAiPrompt(cats.industries, cats.themes, `${stock_name} (${stock_code})`, false);
+		const aiText = await watchlistLogic._callClassifierAi(rt, `classify-${stock_code}`, prompt, SINGLE_CLASSIFICATION_TIMEOUT_MS);
 
 		try {
 			const parsed = extractJsonArray(aiText);
 			const raw = parsed[0];
 			if (raw) {
-				return watchlistLogic._parseClassification(raw, cats, stockName || stockCode);
+				return watchlistLogic._parseClassification(raw, cats, stock_name || stock_code);
 			}
 		} catch (e) {
-			logger.warn({ err: e instanceof Error ? e.message : String(e), stockCode, stockName }, "[Watchlist] AI 分类解析异常");
+			logger.warn({ err: e instanceof Error ? e.message : String(e), stock_code, stock_name }, "[Watchlist] AI 分类解析异常");
 		}
 		return null;
 	},

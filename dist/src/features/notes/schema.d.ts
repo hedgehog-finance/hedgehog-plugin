@@ -1,7 +1,7 @@
 import { z } from "openclaw/plugin-sdk/zod";
 export declare const AddStockNoteParamsSchema: z.ZodObject<{
     watchlistId: z.ZodOptional<z.ZodString>;
-    stockCode: z.ZodOptional<z.ZodString>;
+    stock_code: z.ZodOptional<z.ZodString>;
     exchange: z.ZodOptional<z.ZodEnum<{
         SSE: "SSE";
         SZSE: "SZSE";
@@ -24,7 +24,7 @@ export type DeleteStockNoteParams = z.infer<typeof DeleteStockNoteParamsSchema>;
 export declare const UpdateStockNoteParamsSchema: z.ZodObject<{
     id: z.ZodString;
     watchlistId: z.ZodOptional<z.ZodString>;
-    stockCode: z.ZodOptional<z.ZodString>;
+    stock_code: z.ZodOptional<z.ZodString>;
     exchange: z.ZodOptional<z.ZodEnum<{
         SSE: "SSE";
         SZSE: "SZSE";
@@ -46,7 +46,7 @@ export declare const GetStockNoteByIdParamsSchema: z.ZodObject<{
 export type GetStockNoteByIdParams = z.infer<typeof GetStockNoteByIdParamsSchema>;
 export declare const QueryStockNotesParamsSchema: z.ZodObject<{
     watchlistId: z.ZodOptional<z.ZodString>;
-    stockCode: z.ZodOptional<z.ZodString>;
+    stock_code: z.ZodOptional<z.ZodString>;
     exchange: z.ZodOptional<z.ZodEnum<{
         SSE: "SSE";
         SZSE: "SZSE";
@@ -63,8 +63,8 @@ export type QueryStockNotesParams = z.infer<typeof QueryStockNotesParamsSchema>;
 export interface StockNoteRow {
     id: string;
     watchlistId: string;
-    stockCode: string;
-    stockName: string;
+    stock_code: string;
+    stock_name: string;
     exchange: string;
     market: string;
     note: string;

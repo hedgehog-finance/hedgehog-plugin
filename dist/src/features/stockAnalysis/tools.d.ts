@@ -9,10 +9,10 @@ interface RuntimeTool {
         userId: string;
     }): Promise<string>;
 }
-export declare function normalizeStockCode(stockCode: string): string;
+export declare function normalizeStockCode(stock_code: string): string;
 export declare function saveStockAiAnalysisRecord(db: ReturnType<typeof getDB>, userId: string, args: {
-    stockCode: string;
-    stockName: string;
+    stock_code: string;
+    stock_name: string;
     market: string;
     content: string;
 }): StockAiAnalysis;

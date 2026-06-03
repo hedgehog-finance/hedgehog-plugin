@@ -13,8 +13,8 @@ export const BatchUpdateSortOrdersParamsSchema = z.object({
 const ExchangeEnum = z.enum(["SSE", "SZSE", "NASDAQ", "NYSE", "AMEX", "HKEX"]);
 const MarketEnum = z.enum(["A_SHARE", "US_SHARE", "HK_SHARE", "FUTURES", "FUND", "OTHER"]);
 export const AddToWatchlistParamsSchema = z.object({
-    stockCode: z.string(),
-    stockName: z.string(),
+    stock_code: z.string(),
+    stock_name: z.string(),
     exchange: ExchangeEnum,
     market: MarketEnum
 });
@@ -23,7 +23,7 @@ export const BatchAddToWatchlistParamsSchema = z.object({
 });
 export const UpdateWatchlistItemSchema = z.object({
     id: z.string(),
-    stockName: z.string().optional(),
+    stock_name: z.string().optional(),
     sortOrder: z.number().optional()
 });
 //# sourceMappingURL=schema.js.map

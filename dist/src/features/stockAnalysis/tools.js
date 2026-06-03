@@ -1,27 +1,27 @@
 import { randomUUID } from "node:crypto";
 import { getDB } from "../../core/database.js";
 import { GetArticleAiAnalysisParamsSchema, GetStockAiAnalysisParamsSchema, QueryStockAiAnalysisHistoryParamsSchema, SaveArticleAiAnalysisParamsSchema, SaveStockAiAnalysisParamsSchema } from "./schema.js";
-export function normalizeStockCode(stockCode) {
-    return stockCode.trim().toUpperCase().replace(/\.SS$/i, ".SH");
+export function normalizeStockCode(stock_code) {
+    return stock_code.trim().toUpperCase().replace(/\.SS$/i, ".SH");
 }
-function selectLatestStockAnalysis(db, userId, stockCode) {
+function selectLatestStockAnalysis(db, userId, stock_code) {
     return db.prepare(`
-		SELECT id, stockCode, stockName, market, content, createdAt, updatedAt
+		SELECT id, stock_code, stock_name, market, content, createdAt, updatedAt
 		FROM stock_ai_analysis
-		WHERE userId = ? AND stockCode = ?
+		WHERE userId = ? AND stock_code = ?
 		ORDER BY updatedAt DESC, createdAt DESC
 		LIMIT 1
-	`).get(userId, stockCode);
+	`).get(userId, stock_code);
 }
 export function saveStockAiAnalysisRecord(db, userId, args) {
-    const stockCode = normalizeStockCode(args.stockCode);
+    const stock_code = normalizeStockCode(args.stock_code);
     const id = randomUUID();
     db.prepare(`
-		INSERT INTO stock_ai_analysis (id, userId, stockCode, stockName, market, content)
+		INSERT INTO stock_ai_analysis (id, userId, stock_code, stock_name, market, content)
 		VALUES (?, ?, ?, ?, ?, ?)
-	`).run(id, userId, stockCode, args.stockName, args.market, args.content);
+	`).run(id, userId, stock_code, args.stock_name, args.market, args.content);
     return db.prepare(`
-		SELECT id, stockCode, stockName, market, content, createdAt, updatedAt
+		SELECT id, stock_code, stock_name, market, content, createdAt, updatedAt
 		FROM stock_ai_analysis
 		WHERE userId = ? AND id = ?
 	`).get(userId, id);
@@ -59,7 +59,7 @@ export const stockAnalysisTools = {
         async execute(params, ctx) {
             const args = GetStockAiAnalysisParamsSchema.parse(params);
             const db = getDB();
-            const data = selectLatestStockAnalysis(db, ctx.userId, normalizeStockCode(args.stockCode));
+            const data = selectLatestStockAnalysis(db, ctx.userId, normalizeStockCode(args.stock_code));
             return JSON.stringify({ success: true, data: data || null });
         }
     },
@@ -71,20 +71,20 @@ export const stockAnalysisTools = {
         async execute(params, ctx) {
             const args = QueryStockAiAnalysisHistoryParamsSchema.parse(params);
             const db = getDB();
-            const stockCode = normalizeStockCode(args.stockCode);
+            const stock_code = normalizeStockCode(args.stock_code);
             const offset = (args.page - 1) * args.pageSize;
             const rows = db.prepare(`
-				SELECT id, stockCode, stockName, market, content, createdAt, updatedAt
+				SELECT id, stock_code, stock_name, market, content, createdAt, updatedAt
 				FROM stock_ai_analysis
-				WHERE userId = ? AND stockCode = ? AND market = ?
+				WHERE userId = ? AND stock_code = ? AND market = ?
 				ORDER BY updatedAt DESC, createdAt DESC
 				LIMIT ? OFFSET ?
-			`).all(ctx.userId, stockCode, args.market, args.pageSize, offset);
+			`).all(ctx.userId, stock_code, args.market, args.pageSize, offset);
             const countRow = db.prepare(`
 				SELECT COUNT(*) AS total
 				FROM stock_ai_analysis
-				WHERE userId = ? AND stockCode = ? AND market = ?
-			`).get(ctx.userId, stockCode, args.market);
+				WHERE userId = ? AND stock_code = ? AND market = ?
+			`).get(ctx.userId, stock_code, args.market);
             const total = countRow.total || 0;
             return JSON.stringify({
                 success: true,

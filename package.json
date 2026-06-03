@@ -1,6 +1,6 @@
 {
   "name": "@hedgehog-finance/hedgehog-plugin",
-  "version": "1.0.21",
+  "version": "1.0.22",
   "description": "Hedgehog App WebSocket channel and Watchlist Tools for OpenClaw",
   "keywords": [
     "bot",
@@ -20,6 +20,7 @@
     "dist/**/*.js.map",
     "dist/**/*.d.ts",
     "index.ts",
+    "setup-api.ts",
     "src/**/*.ts",
     "openclaw.plugin.json",
     "LICENSE"
@@ -42,12 +43,19 @@
   },
   "openclaw": {
     "kind": "channel",
+    "contracts": {
+      "tools": [
+        "get_watchlist",
+        "save_daily_morning_briefing"
+      ]
+    },
     "extensions": [
       "./index.ts"
     ],
     "runtimeExtensions": [
       "./dist/index.js"
     ],
+    "setupEntry": "./dist/setup-api.js",
     "install": {
       "npmSpec": "@hedgehog-finance/hedgehog-plugin",
       "defaultChoice": "npm"

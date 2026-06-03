@@ -1,9 +1,29 @@
 import path from "path";
 import * as os from "node:os";
 import { logger } from "./core/logger.js";
+import { ensureDailyMorningBriefingCron } from "./dailyMorningBriefingCron.js";
+import { ensureRegisteredToolsAllowedInConfig } from "./openclawConfig.js";
 let runtime = null;
 let dbPath = "";
 let backupDir = "";
+async function ensureAgentToolAllowConfig(next) {
+    try {
+        if (typeof next.config.mutateConfigFile !== "function")
+            return;
+        await next.config.mutateConfigFile({
+            afterWrite: { mode: "auto" },
+            mutate(draft) {
+                const migrated = ensureRegisteredToolsAllowedInConfig(draft);
+                if (!migrated)
+                    return;
+                Object.assign(draft, migrated.config);
+            }
+        });
+    }
+    catch (e) {
+        logger.error({ err: e }, "Failed to ensure Hedgehog agent tool allow config");
+    }
+}
 export function setHedgehogRuntime(next) {
     runtime = next;
     try {
@@ -19,6 +39,8 @@ export function setHedgehogRuntime(next) {
     catch (e) {
         logger.error({ err: e }, "Failed to resolve workspace");
     }
+    void ensureAgentToolAllowConfig(next);
+    void ensureDailyMorningBriefingCron(next);
 }
 export function getDbPath() {
     if (!dbPath)

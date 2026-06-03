@@ -18,44 +18,44 @@ interface RuntimeTool {
 	execute(params: unknown, ctx: { userId: string }): Promise<string>;
 }
 
-export function normalizeStockCode(stockCode: string): string {
-	return stockCode.trim().toUpperCase().replace(/\.SS$/i, ".SH");
+export function normalizeStockCode(stock_code: string): string {
+	return stock_code.trim().toUpperCase().replace(/\.SS$/i, ".SH");
 }
 
 function selectLatestStockAnalysis(
 	db: ReturnType<typeof getDB>,
 	userId: string,
-	stockCode: string
+	stock_code: string
 ): StockAiAnalysis | undefined {
 	return db.prepare(`
-		SELECT id, stockCode, stockName, market, content, createdAt, updatedAt
+		SELECT id, stock_code, stock_name, market, content, createdAt, updatedAt
 		FROM stock_ai_analysis
-		WHERE userId = ? AND stockCode = ?
+		WHERE userId = ? AND stock_code = ?
 		ORDER BY updatedAt DESC, createdAt DESC
 		LIMIT 1
-	`).get(userId, stockCode) as StockAiAnalysis | undefined;
+	`).get(userId, stock_code) as StockAiAnalysis | undefined;
 }
 
 export function saveStockAiAnalysisRecord(
 	db: ReturnType<typeof getDB>,
 	userId: string,
 	args: {
-		stockCode: string;
-		stockName: string;
+		stock_code: string;
+		stock_name: string;
 		market: string;
 		content: string;
 	}
 ): StockAiAnalysis {
-	const stockCode = normalizeStockCode(args.stockCode);
+	const stock_code = normalizeStockCode(args.stock_code);
 	const id = randomUUID();
 
 	db.prepare(`
-		INSERT INTO stock_ai_analysis (id, userId, stockCode, stockName, market, content)
+		INSERT INTO stock_ai_analysis (id, userId, stock_code, stock_name, market, content)
 		VALUES (?, ?, ?, ?, ?, ?)
-	`).run(id, userId, stockCode, args.stockName, args.market, args.content);
+	`).run(id, userId, stock_code, args.stock_name, args.market, args.content);
 
 	return db.prepare(`
-		SELECT id, stockCode, stockName, market, content, createdAt, updatedAt
+		SELECT id, stock_code, stock_name, market, content, createdAt, updatedAt
 		FROM stock_ai_analysis
 		WHERE userId = ? AND id = ?
 	`).get(userId, id) as StockAiAnalysis;
@@ -113,7 +113,7 @@ export const stockAnalysisTools: Record<string, RuntimeTool> = {
 		async execute(params, ctx) {
 			const args = GetStockAiAnalysisParamsSchema.parse(params);
 			const db = getDB();
-			const data = selectLatestStockAnalysis(db, ctx.userId, normalizeStockCode(args.stockCode));
+			const data = selectLatestStockAnalysis(db, ctx.userId, normalizeStockCode(args.stock_code));
 			return JSON.stringify({ success: true, data: data || null });
 		}
 	},
@@ -125,20 +125,20 @@ export const stockAnalysisTools: Record<string, RuntimeTool> = {
 		async execute(params, ctx) {
 			const args = QueryStockAiAnalysisHistoryParamsSchema.parse(params);
 			const db = getDB();
-			const stockCode = normalizeStockCode(args.stockCode);
+			const stock_code = normalizeStockCode(args.stock_code);
 			const offset = (args.page - 1) * args.pageSize;
 			const rows = db.prepare(`
-				SELECT id, stockCode, stockName, market, content, createdAt, updatedAt
+				SELECT id, stock_code, stock_name, market, content, createdAt, updatedAt
 				FROM stock_ai_analysis
-				WHERE userId = ? AND stockCode = ? AND market = ?
+				WHERE userId = ? AND stock_code = ? AND market = ?
 				ORDER BY updatedAt DESC, createdAt DESC
 				LIMIT ? OFFSET ?
-			`).all(ctx.userId, stockCode, args.market, args.pageSize, offset) as StockAiAnalysis[];
+			`).all(ctx.userId, stock_code, args.market, args.pageSize, offset) as StockAiAnalysis[];
 			const countRow = db.prepare(`
 				SELECT COUNT(*) AS total
 				FROM stock_ai_analysis
-				WHERE userId = ? AND stockCode = ? AND market = ?
-			`).get(ctx.userId, stockCode, args.market) as { total: number };
+				WHERE userId = ? AND stock_code = ? AND market = ?
+			`).get(ctx.userId, stock_code, args.market) as { total: number };
 			const total = countRow.total || 0;
 
 			return JSON.stringify({

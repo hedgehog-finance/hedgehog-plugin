@@ -47,8 +47,8 @@ function startDailyBackupJob() {
     };
     scheduleNextBackup();
 }
-function normalizeMetadataStockCode(stockCode, exchange) {
-    const code = String(stockCode || "").trim().toUpperCase();
+function normalizeMetadataStockCode(stock_code, exchange) {
+    const code = String(stock_code || "").trim().toUpperCase();
     if (/\.(SH|SS|SZ|HK|US)$/i.test(code)) {
         return code.replace(/\.SS$/i, ".SH");
     }
@@ -63,31 +63,46 @@ function normalizeMetadataStockCode(stockCode, exchange) {
             return code;
     }
 }
+function runStockColumnNameMigrations(db) {
+    const legacyCodeColumn = "stock" + "Code";
+    const legacyNameColumn = "stock" + "Name";
+    const tables = ["watchlist", "global_stock_metadata", "stock_ai_analysis"];
+    for (const table of tables) {
+        const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+        const columnNames = new Set(columns.map(column => column.name));
+        if (columnNames.has(legacyCodeColumn) && !columnNames.has("stock_code")) {
+            db.prepare(`ALTER TABLE ${table} RENAME COLUMN ${legacyCodeColumn} TO stock_code`).run();
+        }
+        if (columnNames.has(legacyNameColumn) && !columnNames.has("stock_name")) {
+            db.prepare(`ALTER TABLE ${table} RENAME COLUMN ${legacyNameColumn} TO stock_name`).run();
+        }
+    }
+}
 function runWatchlistDedupMigrations(db) {
     db.exec("BEGIN TRANSACTION");
     try {
         const metadataRows = db.prepare(`
-			SELECT stockCode, exchange FROM global_stock_metadata
+			SELECT stock_code, exchange FROM global_stock_metadata
 		`).all();
         const metadataDeleteStmt = db.prepare(`
-			DELETE FROM global_stock_metadata WHERE stockCode = ? AND exchange = ?
+			DELETE FROM global_stock_metadata WHERE stock_code = ? AND exchange = ?
 		`);
         const metadataUpdateStmt = db.prepare(`
-			UPDATE global_stock_metadata SET stockCode = ? WHERE stockCode = ? AND exchange = ?
+			UPDATE global_stock_metadata SET stock_code = ? WHERE stock_code = ? AND exchange = ?
 		`);
         const metadataExistsStmt = db.prepare(`
-			SELECT 1 FROM global_stock_metadata WHERE stockCode = ? AND exchange = ?
+			SELECT 1 FROM global_stock_metadata WHERE stock_code = ? AND exchange = ?
 		`);
         for (const row of metadataRows) {
-            const normalizedCode = normalizeMetadataStockCode(row.stockCode, row.exchange);
-            if (!normalizedCode || normalizedCode === row.stockCode)
+            const normalizedCode = normalizeMetadataStockCode(row.stock_code, row.exchange);
+            if (!normalizedCode || normalizedCode === row.stock_code)
                 continue;
             const existing = metadataExistsStmt.get(normalizedCode, row.exchange);
             if (existing) {
-                metadataDeleteStmt.run(row.stockCode, row.exchange);
+                metadataDeleteStmt.run(row.stock_code, row.exchange);
             }
             else {
-                metadataUpdateStmt.run(normalizedCode, row.stockCode, row.exchange);
+                metadataUpdateStmt.run(normalizedCode, row.stock_code, row.exchange);
             }
         }
         const duplicateCategories = db.prepare(`
@@ -142,6 +157,48 @@ function runStockNotesMigrations(db) {
     }
     db.exec("CREATE INDEX IF NOT EXISTS idx_stock_notes_user_stock ON stock_notes(userId, watchlistId, updatedAt DESC)");
 }
+function runDailyMorningBriefingMigrations(db) {
+    const indexes = db.prepare("PRAGMA index_list(daily_morning_briefings)").all();
+    const hasUniqueDateMarketIndex = indexes.some(index => {
+        if (index.unique !== 1)
+            return false;
+        const columns = db.prepare(`PRAGMA index_info(${index.name})`).all();
+        const columnNames = columns.map(column => column.name);
+        return columnNames.length === 2 && columnNames.includes("briefingDate") && columnNames.includes("market");
+    });
+    if (!hasUniqueDateMarketIndex)
+        return;
+    db.exec("BEGIN");
+    try {
+        db.exec(`
+			DROP TABLE IF EXISTS daily_morning_briefings_history;
+
+			CREATE TABLE daily_morning_briefings_history (
+				id                     TEXT PRIMARY KEY,
+				market                 TEXT NOT NULL DEFAULT 'CN',
+				briefingDate           TEXT NOT NULL,
+				content                TEXT NOT NULL,
+				watchlistSnapshotJson  TEXT NOT NULL DEFAULT '[]',
+				createdAt              DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
+				updatedAt              DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW'))
+			);
+
+			INSERT INTO daily_morning_briefings_history (id, market, briefingDate, content, watchlistSnapshotJson, createdAt, updatedAt)
+			SELECT id, market, briefingDate, content, watchlistSnapshotJson, createdAt, updatedAt
+			FROM daily_morning_briefings;
+
+			DROP TABLE daily_morning_briefings;
+			ALTER TABLE daily_morning_briefings_history RENAME TO daily_morning_briefings;
+			CREATE INDEX IF NOT EXISTS idx_daily_morning_briefings_date ON daily_morning_briefings(briefingDate DESC);
+		`);
+        db.exec("COMMIT");
+    }
+    catch (e) {
+        if (db.inTransaction)
+            db.exec("ROLLBACK");
+        throw e;
+    }
+}
 function runStockAiAnalysisMigrations(db) {
     const indexes = db.prepare("PRAGMA index_list(stock_ai_analysis)").all();
     const hasUniqueStockIndex = indexes.some(index => {
@@ -149,7 +206,7 @@ function runStockAiAnalysisMigrations(db) {
             return false;
         const columns = db.prepare(`PRAGMA index_info(${index.name})`).all();
         const columnNames = columns.map(column => column.name);
-        return columnNames.includes("userId") && columnNames.includes("stockCode");
+        return columnNames.includes("userId") && columnNames.includes("stock_code");
     });
     if (!hasUniqueStockIndex)
         return;
@@ -161,8 +218,8 @@ function runStockAiAnalysisMigrations(db) {
 			CREATE TABLE stock_ai_analysis_history (
 				id            TEXT NOT NULL,
 				userId        TEXT NOT NULL,
-				stockCode     TEXT NOT NULL,
-				stockName     TEXT NOT NULL,
+				stock_code     TEXT NOT NULL,
+				stock_name     TEXT NOT NULL,
 				market        TEXT NOT NULL DEFAULT 'CN',
 				content       TEXT NOT NULL,
 				createdAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
@@ -170,13 +227,13 @@ function runStockAiAnalysisMigrations(db) {
 				PRIMARY KEY(id, userId)
 			);
 
-			INSERT INTO stock_ai_analysis_history (id, userId, stockCode, stockName, market, content, createdAt, updatedAt)
-			SELECT id, userId, stockCode, stockName, market, content, createdAt, updatedAt
+			INSERT INTO stock_ai_analysis_history (id, userId, stock_code, stock_name, market, content, createdAt, updatedAt)
+			SELECT id, userId, stock_code, stock_name, market, content, createdAt, updatedAt
 			FROM stock_ai_analysis;
 
 			DROP TABLE stock_ai_analysis;
 			ALTER TABLE stock_ai_analysis_history RENAME TO stock_ai_analysis;
-			CREATE INDEX IF NOT EXISTS idx_stock_ai_analysis_user_stock_updated ON stock_ai_analysis(userId, stockCode, updatedAt DESC);
+			CREATE INDEX IF NOT EXISTS idx_stock_ai_analysis_user_stock_updated ON stock_ai_analysis(userId, stock_code, updatedAt DESC);
 		`);
         db.exec("COMMIT");
     }
@@ -244,25 +301,25 @@ export function getDB() {
         CREATE TABLE IF NOT EXISTS watchlist (
 			id         TEXT PRIMARY KEY,
 			userId     TEXT NOT NULL,
-			stockCode  TEXT NOT NULL,
+			stock_code  TEXT NOT NULL,
 			exchange   TEXT NOT NULL,
 			market     TEXT NOT NULL,
-			stockName  TEXT NOT NULL,
+			stock_name  TEXT NOT NULL,
 			sortOrder  REAL DEFAULT 0,
 			isDeleted  INTEGER DEFAULT 0 CHECK (isDeleted IN (0, 1)),
             createdAt  DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
             updatedAt  DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
-            UNIQUE(userId, stockCode, exchange)
+            UNIQUE(userId, stock_code, exchange)
 		);
 
 		CREATE TABLE IF NOT EXISTS global_stock_metadata (
-			stockCode     TEXT NOT NULL,
+			stock_code     TEXT NOT NULL,
 			exchange      TEXT NOT NULL,
-			stockName     TEXT NOT NULL,
+			stock_name     TEXT NOT NULL,
 			industryJson  TEXT,
 			themeJson     TEXT,
 			lastUpdated   DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
-			PRIMARY KEY(stockCode, exchange)
+			PRIMARY KEY(stock_code, exchange)
 		);
 
         CREATE INDEX IF NOT EXISTS idx_watchlist_main ON watchlist(userId, isDeleted, sortOrder ASC);
@@ -337,15 +394,15 @@ export function getDB() {
 		CREATE TABLE IF NOT EXISTS stock_ai_analysis (
 			id            TEXT NOT NULL,
 			userId        TEXT NOT NULL,
-			stockCode     TEXT NOT NULL,
-			stockName     TEXT NOT NULL,
+			stock_code     TEXT NOT NULL,
+			stock_name     TEXT NOT NULL,
 			market        TEXT NOT NULL DEFAULT 'CN',
 			content       TEXT NOT NULL,
 			createdAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
 			updatedAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
 			PRIMARY KEY(id, userId)
 		);
-		CREATE INDEX IF NOT EXISTS idx_stock_ai_analysis_user_stock_updated ON stock_ai_analysis(userId, stockCode, updatedAt DESC);
+		CREATE INDEX IF NOT EXISTS idx_stock_ai_analysis_user_stock_updated ON stock_ai_analysis(userId, stock_code, updatedAt DESC);
 
 		CREATE TABLE IF NOT EXISTS article_ai_analysis (
 			id            TEXT NOT NULL,
@@ -360,11 +417,24 @@ export function getDB() {
 			UNIQUE(sourceId, userId, analysisType, market)
 		);
 		CREATE INDEX IF NOT EXISTS idx_article_ai_analysis_user_source_type_updated ON article_ai_analysis(userId, sourceId, analysisType, updatedAt DESC);
+
+		CREATE TABLE IF NOT EXISTS daily_morning_briefings (
+			id                     TEXT PRIMARY KEY,
+			market                 TEXT NOT NULL DEFAULT 'CN',
+			briefingDate           TEXT NOT NULL,
+			content                TEXT NOT NULL,
+			watchlistSnapshotJson  TEXT NOT NULL DEFAULT '[]',
+			createdAt              DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
+			updatedAt              DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW'))
+		);
+		CREATE INDEX IF NOT EXISTS idx_daily_morning_briefings_date ON daily_morning_briefings(briefingDate DESC);
 		`);
+        runStockColumnNameMigrations(_db);
         runWatchlistDedupMigrations(_db);
         runStockNotesMigrations(_db);
         runStockAiAnalysisMigrations(_db);
         runArticleAiAnalysisMigrations(_db);
+        runDailyMorningBriefingMigrations(_db);
     }
     return _db;
 }

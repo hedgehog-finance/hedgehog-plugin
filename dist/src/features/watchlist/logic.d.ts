@@ -1,9 +1,9 @@
 import { PluginRuntime } from "openclaw/plugin-sdk";
 import { StockClassification } from "../../types.js";
-declare function normalizeStockCodeForCache(stockCode: string, exchange?: string): string;
+declare function normalizeStockCodeForCache(stock_code: string, exchange?: string): string;
 export declare const watchlistLogic: {
     _normalizeStockCodeForCache: typeof normalizeStockCodeForCache;
-    getStockClassification(rt: PluginRuntime, stockName: string, stockCode: string, exchange: string, _userId: string): Promise<StockClassification | null>;
+    getStockClassification(rt: PluginRuntime, stock_name: string, stock_code: string, exchange: string, _userId: string): Promise<StockClassification | null>;
     classifyStocksTogether(rt: PluginRuntime, stocks: any[], _userId: string): Promise<StockClassification[]>;
     getBatchStockClassification(rt: PluginRuntime, stocks: any[], _userId: string, options?: {
         requireComplete?: boolean;
@@ -13,7 +13,7 @@ export declare const watchlistLogic: {
         industries: any[];
         themes: any[];
     };
-    _autoClassifyWithAI(rt: PluginRuntime, stockName: string, stockCode: string, exchange: string): Promise<StockClassification | null>;
+    _autoClassifyWithAI(rt: PluginRuntime, stock_name: string, stock_code: string, exchange: string): Promise<StockClassification | null>;
     _callClassifierCompletion(rt: PluginRuntime, sessionId: string, prompt: string, timeoutMs: number): Promise<string>;
     _callClassifierAi(rt: PluginRuntime, sessionId: string, prompt: string, timeoutMs: number): Promise<string>;
     _ensureCategory(db: any, name: string, type: "industry" | "theme", userId: string): string;

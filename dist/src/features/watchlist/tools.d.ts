@@ -6,8 +6,8 @@ export declare const watchlistTools: {
         name: string;
         description: string;
         parameters: z.ZodObject<{
-            stockCode: z.ZodString;
-            stockName: z.ZodString;
+            stock_code: z.ZodString;
+            stock_name: z.ZodString;
             exchange: z.ZodEnum<{
                 SSE: "SSE";
                 SZSE: "SZSE";
@@ -36,8 +36,8 @@ export declare const watchlistTools: {
         description: string;
         parameters: z.ZodObject<{
             stocks: z.ZodArray<z.ZodObject<{
-                stockCode: z.ZodString;
-                stockName: z.ZodString;
+                stock_code: z.ZodString;
+                stock_name: z.ZodString;
                 exchange: z.ZodEnum<{
                     SSE: "SSE";
                     SZSE: "SZSE";
@@ -80,15 +80,23 @@ export declare const watchlistTools: {
     get_watchlist: {
         name: string;
         description: string;
-        parameters: z.ZodObject<{
-            categoryId: z.ZodOptional<z.ZodString>;
-            categoryType: z.ZodOptional<z.ZodEnum<{
-                industry: "industry";
-                theme: "theme";
-            }>>;
-        }, z.core.$strip>;
+        parameters: {
+            type: string;
+            additionalProperties: boolean;
+            properties: {
+                categoryId: {
+                    type: string;
+                    description: string;
+                };
+                categoryType: {
+                    type: string;
+                    enum: string[];
+                    description: string;
+                };
+            };
+        };
         registerTool: boolean;
-        execute: (args: GetWatchlistParams, ctx: {
+        execute: (rawArgs: GetWatchlistParams, ctx?: {
             userId: string;
         }) => Promise<string>;
     };

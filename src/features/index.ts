@@ -3,6 +3,7 @@ import { profileLibraryTools } from "./profileLibrary/tools.js";
 import { noteTools } from "./notes/tools.js";
 import { stockAnalysisTools } from "./stockAnalysis/tools.js";
 import { pluginInfoTools } from "./pluginInfo/tools.js";
+import { dailyMorningBriefingTools } from "./dailyMorningBriefing/tools.js";
 
 export interface RuntimeTool {
     name: string;
@@ -10,7 +11,7 @@ export interface RuntimeTool {
     description: string;
     parameters: unknown;
     registerTool?: boolean;
-    execute(params: unknown, ctx: { userId: string }): Promise<string>;
+    execute(params: unknown, ctx?: { userId: string }): Promise<string>;
 }
 
 export const allFeaturesTools: Record<string, RuntimeTool> = {
@@ -18,5 +19,6 @@ export const allFeaturesTools: Record<string, RuntimeTool> = {
     ...profileLibraryTools,
     ...noteTools,
     ...stockAnalysisTools,
-    ...pluginInfoTools
+    ...pluginInfoTools,
+    ...dailyMorningBriefingTools
 };

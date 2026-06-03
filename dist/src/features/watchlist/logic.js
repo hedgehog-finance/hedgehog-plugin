@@ -19,8 +19,8 @@ const CLASSIFIER_SYSTEM_PROMPT = [
     "禁止输出推理过程、解释、Markdown 或代码块；不要思考展开，只做快速匹配。",
     "只允许根据用户消息中提供的行业/主题分类字典和股票列表输出纯 JSON 数组。"
 ].join("\n");
-function normalizeStockCodeForCache(stockCode, exchange) {
-    const code = String(stockCode || "")
+function normalizeStockCodeForCache(stock_code, exchange) {
+    const code = String(stock_code || "")
         .trim()
         .toUpperCase();
     if (/\.(SH|SS|SZ|HK|US)$/i.test(code)) {
@@ -37,18 +37,18 @@ function normalizeStockCodeForCache(stockCode, exchange) {
             return code;
     }
 }
-function legacyStockCodeWithoutSuffix(stockCode) {
-    return String(stockCode || "")
+function legacyStockCodeWithoutSuffix(stock_code) {
+    return String(stock_code || "")
         .trim()
         .toUpperCase()
         .replace(/\.(SH|SS|SZ|HK|US)$/i, "");
 }
-function getCachedClassificationRow(db, stockCode, exchange) {
-    const cacheCode = normalizeStockCodeForCache(stockCode, exchange);
-    const legacyCode = legacyStockCodeWithoutSuffix(stockCode);
+function getCachedClassificationRow(db, stock_code, exchange) {
+    const cacheCode = normalizeStockCodeForCache(stock_code, exchange);
+    const legacyCode = legacyStockCodeWithoutSuffix(stock_code);
     const stmt = db.prepare(`
 		SELECT industryJson, themeJson FROM global_stock_metadata
-		WHERE stockCode = ? AND exchange = ?
+		WHERE stock_code = ? AND exchange = ?
 	`);
     return (stmt.get(cacheCode, exchange) || (legacyCode !== cacheCode ? stmt.get(legacyCode, exchange) : undefined));
 }
@@ -149,9 +149,9 @@ function extractJsonArray(text) {
 }
 export const watchlistLogic = {
     _normalizeStockCodeForCache: normalizeStockCodeForCache,
-    async getStockClassification(rt, stockName, stockCode, exchange, _userId) {
+    async getStockClassification(rt, stock_name, stock_code, exchange, _userId) {
         const db = getDB();
-        const cached = getCachedClassificationRow(db, stockCode, exchange);
+        const cached = getCachedClassificationRow(db, stock_code, exchange);
         if (cached && cached.industryJson) {
             try {
                 return watchlistLogic._normalizeCachedClassification({
@@ -163,7 +163,7 @@ export const watchlistLogic = {
             catch (e) {
             }
         }
-        const classification = await watchlistLogic._autoClassifyWithAI(rt, stockName, stockCode, exchange);
+        const classification = await watchlistLogic._autoClassifyWithAI(rt, stock_name, stock_code, exchange);
         return classification;
     },
     async classifyStocksTogether(rt, stocks, _userId) {
@@ -171,7 +171,7 @@ export const watchlistLogic = {
         const results = new Array(stocks.length).fill(null);
         const pendingStocks = [];
         stocks.forEach((stock, idx) => {
-            const cached = getCachedClassificationRow(db, stock.stockCode, stock.exchange);
+            const cached = getCachedClassificationRow(db, stock.stock_code, stock.exchange);
             if (cached && cached.industryJson) {
                 try {
                     results[idx] = watchlistLogic._normalizeCachedClassification({
@@ -186,8 +186,8 @@ export const watchlistLogic = {
             }
             pendingStocks.push({
                 idx,
-                stockName: stock.stockName,
-                stockCode: stock.stockCode,
+                stock_name: stock.stock_name,
+                stock_code: stock.stock_code,
                 exchange: stock.exchange
             });
         });
@@ -198,7 +198,7 @@ export const watchlistLogic = {
         if (cats.industries.length === 0) {
             throw new Error("行业分类字典为空，无法分析行业/主题关系");
         }
-        const stocksList = pendingStocks.map(s => `- ${s.stockName} (${s.stockCode})`).join("\n");
+        const stocksList = pendingStocks.map(s => `- ${s.stock_name} (${s.stock_code})`).join("\n");
         const prompt = watchlistLogic._buildAiPrompt(cats.industries, cats.themes, stocksList, true);
         const sessionId = `classify-batch-${randomUUID()}`;
         const aiText = await watchlistLogic._callClassifierAi(rt, sessionId, prompt, resolveBatchClassificationTimeoutMs(pendingStocks.length));
@@ -209,7 +209,7 @@ export const watchlistLogic = {
         catch (e) {
             logger.warn({
                 err: e instanceof Error ? e.message : String(e),
-                pendingCodes: pendingStocks.map(stock => stock.stockCode),
+                pendingCodes: pendingStocks.map(stock => stock.stock_code),
                 aiTextLength: aiText.length,
                 aiText
             }, "[Watchlist] batch classification AI parse failed");
@@ -223,17 +223,17 @@ export const watchlistLogic = {
         let parsedResults;
         try {
             parsedResults = pendingStocks.map((stock, i) => {
-                const raw = parsedByCode.get(String(stock.stockCode)) || parsed[i];
+                const raw = parsedByCode.get(String(stock.stock_code)) || parsed[i];
                 return {
                     stock,
-                    data: watchlistLogic._parseClassification(raw, cats, stock.stockName || stock.stockCode)
+                    data: watchlistLogic._parseClassification(raw, cats, stock.stock_name || stock.stock_code)
                 };
             });
         }
         catch (e) {
             logger.warn({
                 err: e instanceof Error ? e.message : String(e),
-                pendingCodes: pendingStocks.map(stock => stock.stockCode),
+                pendingCodes: pendingStocks.map(stock => stock.stock_code),
                 aiTextLength: aiText.length,
                 aiText
             }, "[Watchlist] batch classification AI semantic parse failed");
@@ -244,7 +244,7 @@ export const watchlistLogic = {
         }
         const missing = stocks.find((_, i) => !results[i]);
         if (missing) {
-            throw new Error(`行业/主题关系分析失败: ${missing.stockName || missing.stockCode}`);
+            throw new Error(`行业/主题关系分析失败: ${missing.stock_name || missing.stock_code}`);
         }
         return results;
     },
@@ -255,7 +255,7 @@ export const watchlistLogic = {
         stocks.forEach((s, i) => {
             const cached = options.forceRefresh
                 ? undefined
-                : getCachedClassificationRow(db, s.stockCode, s.exchange);
+                : getCachedClassificationRow(db, s.stock_code, s.exchange);
             if (cached && cached.industryJson) {
                 try {
                     results[i] = watchlistLogic._normalizeCachedClassification({
@@ -265,11 +265,11 @@ export const watchlistLogic = {
                     });
                 }
                 catch (e) {
-                    pendingStocks.push({ idx: i, name: s.stockName, code: s.stockCode, exchange: s.exchange });
+                    pendingStocks.push({ idx: i, name: s.stock_name, code: s.stock_code, exchange: s.exchange });
                 }
             }
             else {
-                pendingStocks.push({ idx: i, name: s.stockName, code: s.stockCode, exchange: s.exchange });
+                pendingStocks.push({ idx: i, name: s.stock_name, code: s.stock_code, exchange: s.exchange });
             }
         });
         if (pendingStocks.length > 0) {
@@ -309,7 +309,7 @@ export const watchlistLogic = {
         if (options.requireComplete) {
             const missing = stocks.find((_, i) => !results[i]);
             if (missing) {
-                throw new Error(`行业/主题关系分析失败: ${missing.stockName || missing.stockCode}`);
+                throw new Error(`行业/主题关系分析失败: ${missing.stock_name || missing.stock_code}`);
             }
         }
         return results;
@@ -322,23 +322,23 @@ export const watchlistLogic = {
             themes: themes.map(t => t.name)
         };
     },
-    async _autoClassifyWithAI(rt, stockName, stockCode, exchange) {
+    async _autoClassifyWithAI(rt, stock_name, stock_code, exchange) {
         const db = getDB();
         const cats = watchlistLogic._getKnownCategories(db);
         if (cats.industries.length === 0) {
             return null;
         }
-        const prompt = watchlistLogic._buildAiPrompt(cats.industries, cats.themes, `${stockName} (${stockCode})`, false);
-        const aiText = await watchlistLogic._callClassifierAi(rt, `classify-${stockCode}`, prompt, SINGLE_CLASSIFICATION_TIMEOUT_MS);
+        const prompt = watchlistLogic._buildAiPrompt(cats.industries, cats.themes, `${stock_name} (${stock_code})`, false);
+        const aiText = await watchlistLogic._callClassifierAi(rt, `classify-${stock_code}`, prompt, SINGLE_CLASSIFICATION_TIMEOUT_MS);
         try {
             const parsed = extractJsonArray(aiText);
             const raw = parsed[0];
             if (raw) {
-                return watchlistLogic._parseClassification(raw, cats, stockName || stockCode);
+                return watchlistLogic._parseClassification(raw, cats, stock_name || stock_code);
             }
         }
         catch (e) {
-            logger.warn({ err: e instanceof Error ? e.message : String(e), stockCode, stockName }, "[Watchlist] AI 分类解析异常");
+            logger.warn({ err: e instanceof Error ? e.message : String(e), stock_code, stock_name }, "[Watchlist] AI 分类解析异常");
         }
         return null;
     },

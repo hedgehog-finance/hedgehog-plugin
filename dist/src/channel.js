@@ -145,69 +145,69 @@ function parseStockAnalysisRequest(text, chatId) {
     }
     const payload = body;
     const cwContent = typeof payload.cw_content === "string" ? payload.cw_content.trim() : "";
-    let stockCode = "";
-    let stockName = "";
+    let stock_code = "";
+    let stock_name = "";
     // 1. Try parsing cw_context if it exists
     const cwContext = typeof payload.cw_context === "string" ? payload.cw_context.trim() : "";
     if (cwContext) {
         try {
             const parsedContext = JSON.parse(cwContext);
             if (parsedContext && typeof parsedContext === "object" && !Array.isArray(parsedContext)) {
-                stockCode = typeof parsedContext.stockCode === "string" ? parsedContext.stockCode.trim() : "";
-                stockName = typeof parsedContext.stockName === "string" ? parsedContext.stockName.trim() : "";
+                stock_code = typeof parsedContext.stock_code === "string" ? parsedContext.stock_code.trim() : "";
+                stock_name = typeof parsedContext.stock_name === "string" ? parsedContext.stock_name.trim() : "";
             }
         }
         catch {
-            // If not a valid JSON string, treat cwContext as the plain stockCode
-            stockCode = cwContext;
+            // If not a valid JSON string, treat cwContext as the plain stock_code
+            stock_code = cwContext;
         }
     }
-    // 2. If we found a stockCode but no stockName, attempt database lookups
-    if (stockCode && !stockName) {
+    // 2. If we found a stock_code but no stock_name, attempt database lookups
+    if (stock_code && !stock_name) {
         try {
             const db = getDB();
-            const normalizedCode = stockCode.toUpperCase().replace(/\.SS$/i, ".SH");
+            const normalizedCode = stock_code.toUpperCase().replace(/\.SS$/i, ".SH");
             // Query global_stock_metadata first
-            let row = db.prepare(`SELECT stockName FROM global_stock_metadata WHERE stockCode = ? OR stockCode = ? LIMIT 1`)
+            let row = db.prepare(`SELECT stock_name FROM global_stock_metadata WHERE stock_code = ? OR stock_code = ? LIMIT 1`)
                 .get(normalizedCode, normalizedCode.replace(/\.SH$/i, "").replace(/\.SZ$/i, "").replace(/\.HK$/i, ""));
             if (!row) {
                 // Fallback to watchlist
-                row = db.prepare(`SELECT stockName FROM watchlist WHERE stockCode = ? LIMIT 1`)
+                row = db.prepare(`SELECT stock_name FROM watchlist WHERE stock_code = ? LIMIT 1`)
                     .get(normalizedCode);
             }
-            if (row?.stockName) {
-                stockName = row.stockName;
+            if (row?.stock_name) {
+                stock_name = row.stock_name;
             }
             else {
-                stockName = stockCode; // fallback to code if name not found in db
+                stock_name = stock_code; // fallback to code if name not found in db
             }
         }
         catch {
-            stockName = stockCode;
+            stock_name = stock_code;
         }
     }
-    // 3. Fallback to legacy cwContent/chatId parsing if no stockCode was found via cw_context
-    if (!stockCode) {
+    // 3. Fallback to legacy cwContent/chatId parsing if no stock_code was found via cw_context
+    if (!stock_code) {
         if (!cwContent.startsWith("分析一下") || !cwContent.endsWith("股票")) {
             return null;
         }
         const chatIdMatch = typeof chatId === "string"
             ? /^stock_analysis_(.+)_\d+$/.exec(chatId)
             : null;
-        stockCode = typeof payload.cw_stock_code === "string"
+        stock_code = typeof payload.cw_stock_code === "string"
             ? payload.cw_stock_code.trim()
             : chatIdMatch?.[1]?.trim() || "";
-        stockName = typeof payload.cw_stock_name === "string"
+        stock_name = typeof payload.cw_stock_name === "string"
             ? payload.cw_stock_name.trim()
             : cwContent.replace(/^分析一下/, "").replace(/股票$/, "").trim();
     }
     const market = typeof payload.cw_market === "string" && payload.cw_market.trim()
         ? payload.cw_market.trim()
         : "CN";
-    if (!stockCode || !stockName) {
+    if (!stock_code || !stock_name) {
         return null;
     }
-    return { stockCode, stockName, market };
+    return { stock_code, stock_name, market };
 }
 async function getJsonlLineCountAsync(agentId, sessionId) {
     try {
@@ -640,7 +640,7 @@ export const hedgehogFinancePlugin = {
                         }
                         catch (err) {
                             const message = err?.message || "保存股票 AI 分析失败";
-                            childLogger.error({ err: message, chatId, stockCode: stockAnalysisRequest.stockCode }, "保存股票 AI 分析失败");
+                            childLogger.error({ err: message, chatId, stock_code: stockAnalysisRequest.stock_code }, "保存股票 AI 分析失败");
                             sendEvent("error", { error: message });
                             throw err;
                         }
