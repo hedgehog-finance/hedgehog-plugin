@@ -1,6 +1,6 @@
 {
   "name": "@hedgehog-finance/hedgehog-plugin",
-  "version": "1.0.25",
+  "version": "1.0.26",
   "description": "Hedgehog App WebSocket channel and Watchlist Tools for OpenClaw",
   "keywords": [
     "bot",

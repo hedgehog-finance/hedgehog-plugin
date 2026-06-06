@@ -71,18 +71,16 @@ export const deepReasoningTools = {
         async execute(params, ctx) {
             const args = QueryDeepReasoningHistoryParamsSchema.parse(params ?? {});
             const db = getDB();
-            const userId = ctx?.userId || "default";
             const offset = (args.page - 1) * args.pageSize;
             const rows = db.prepare(`
 				SELECT id, sourceId, sourceTitle, status, createdAt, updatedAt
 				FROM news_deep_reasoning_analysis
-				WHERE userId = ?
 				ORDER BY updatedAt DESC, createdAt DESC
 				LIMIT ? OFFSET ?
-			`).all(userId, args.pageSize, offset);
+			`).all(args.pageSize, offset);
             const countRow = db.prepare(`
-				SELECT COUNT(*) AS total FROM news_deep_reasoning_analysis WHERE userId = ?
-			`).get(userId);
+				SELECT COUNT(*) AS total FROM news_deep_reasoning_analysis
+			`).get();
             const total = countRow.total || 0;
             return JSON.stringify({
                 success: true,

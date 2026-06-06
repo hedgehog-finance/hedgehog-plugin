@@ -70,18 +70,16 @@ export const informationVerificationTools = {
         async execute(params, ctx) {
             const args = QueryInformationVerificationHistoryParamsSchema.parse(params ?? {});
             const db = getDB();
-            const userId = ctx?.userId || "default";
             const offset = (args.page - 1) * args.pageSize;
             const rows = db.prepare(`
 				SELECT id, sourceId, sourceTitle, status, createdAt, updatedAt
 				FROM news_fact_check_analysis
-				WHERE userId = ?
 				ORDER BY updatedAt DESC, createdAt DESC
 				LIMIT ? OFFSET ?
-			`).all(userId, args.pageSize, offset);
+			`).all(args.pageSize, offset);
             const countRow = db.prepare(`
-				SELECT COUNT(*) AS total FROM news_fact_check_analysis WHERE userId = ?
-			`).get(userId);
+				SELECT COUNT(*) AS total FROM news_fact_check_analysis
+			`).get();
             const total = countRow.total || 0;
             return JSON.stringify({
                 success: true,
