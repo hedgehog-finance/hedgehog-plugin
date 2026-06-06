@@ -57,35 +57,83 @@ function buildDeepReasoningMessage(args) {
         ].join("\n")
     });
 }
-function selectGeneratingDeepReasoning(userId, sourceId) {
+function selectGeneratingDeepReasoning(sourceId, market, sessionId) {
     const db = getDB();
+    const normalizedSessionId = sessionId?.trim() || "";
+    if (normalizedSessionId) {
+        const bySession = db.prepare(`
+			SELECT id, sourceId, sourceTitle, market, sessionId, status, content, createdAt, updatedAt
+			FROM news_deep_reasoning_analysis
+			WHERE sourceId = ? AND market = ? AND sessionId = ? AND status = 'generating'
+			ORDER BY updatedAt DESC, createdAt DESC
+			LIMIT 1
+		`).get(sourceId, market, normalizedSessionId);
+        if (bySession)
+            return bySession;
+    }
     return db.prepare(`
-		SELECT id, sourceId, sourceTitle, sessionId, status, content, createdAt, updatedAt
+		SELECT id, sourceId, sourceTitle, market, sessionId, status, content, createdAt, updatedAt
 		FROM news_deep_reasoning_analysis
-		WHERE userId = ? AND sourceId = ? AND status = 'generating'
+		WHERE sourceId = ? AND market = ? AND status = 'generating'
 		ORDER BY updatedAt DESC, createdAt DESC
 		LIMIT 1
-	`).get(userId, sourceId);
+	`).get(sourceId, market);
+}
+function selectDeepReasoningForUpdate(sourceId, market, sessionId) {
+    const db = getDB();
+    if (sessionId) {
+        const bySession = db.prepare(`
+			SELECT id, sourceId, sourceTitle, market, sessionId, status, content, createdAt, updatedAt
+			FROM news_deep_reasoning_analysis
+			WHERE sourceId = ? AND market = ? AND sessionId = ?
+			ORDER BY updatedAt DESC, createdAt DESC
+			LIMIT 1
+		`).get(sourceId, market, sessionId);
+        if (bySession)
+            return bySession;
+    }
+    const generating = selectGeneratingDeepReasoning(sourceId, market);
+    if (generating)
+        return generating;
+    return db.prepare(`
+		SELECT id, sourceId, sourceTitle, market, sessionId, status, content, createdAt, updatedAt
+		FROM news_deep_reasoning_analysis
+		WHERE sourceId = ? AND market = ?
+		ORDER BY updatedAt DESC, createdAt DESC
+		LIMIT 1
+	`).get(sourceId, market);
 }
 function saveDeepReasoningRecord(userId, args) {
     const db = getDB();
     const id = randomUUID();
     const sessionId = args.sessionId?.trim() || "";
+    const existing = selectDeepReasoningForUpdate(args.sourceId, args.market, sessionId);
+    if (existing) {
+        const sourceTitle = args.sourceTitle.trim() || existing.sourceTitle || "";
+        db.prepare(`
+			UPDATE news_deep_reasoning_analysis
+			SET sourceTitle = ?,
+				sessionId = CASE WHEN ? != '' THEN ? ELSE sessionId END,
+				status = ?,
+				content = ?,
+				updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
+			WHERE id = ?
+		`).run(sourceTitle, sessionId, sessionId, args.status, args.content, existing.id);
+        return db.prepare(`
+			SELECT id, sourceId, 'deduction' AS analysisType, sourceTitle, market, sessionId, status, content, createdAt, updatedAt
+			FROM news_deep_reasoning_analysis
+			WHERE id = ?
+		`).get(existing.id);
+    }
     db.prepare(`
 		INSERT INTO news_deep_reasoning_analysis (id, sourceId, sourceTitle, userId, market, sessionId, status, content)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(sourceId, userId, market) DO UPDATE SET
-			sourceTitle = CASE WHEN excluded.sourceTitle != '' THEN excluded.sourceTitle ELSE news_deep_reasoning_analysis.sourceTitle END,
-			sessionId = CASE WHEN excluded.sessionId != '' THEN excluded.sessionId ELSE news_deep_reasoning_analysis.sessionId END,
-			status = excluded.status,
-			content = excluded.content,
-			updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
 	`).run(id, args.sourceId, args.sourceTitle, userId, args.market, sessionId, args.status, args.content);
     return db.prepare(`
 		SELECT id, sourceId, 'deduction' AS analysisType, sourceTitle, market, sessionId, status, content, createdAt, updatedAt
 		FROM news_deep_reasoning_analysis
-		WHERE userId = ? AND sourceId = ? AND market = ?
-	`).get(userId, args.sourceId, args.market);
+		WHERE id = ?
+	`).get(id);
 }
 export const deepReasoningTools = {
     query_deep_reasoning_history: {
@@ -161,10 +209,10 @@ export const deepReasoningTools = {
             const row = db.prepare(`
 				SELECT id, sourceId, sourceTitle, market, sessionId, status, createdAt, updatedAt
 				FROM news_deep_reasoning_analysis
-				WHERE userId = ? AND sessionId = ? AND sourceId = ?
+				WHERE sessionId = ? AND sourceId = ?
 				ORDER BY updatedAt DESC, createdAt DESC
 				LIMIT 1
-			`).get(ctx?.userId || "default", args.sessionId, args.sourceId);
+			`).get(args.sessionId, args.sourceId);
             return JSON.stringify({ success: true, data: row || null });
         }
     },
@@ -176,8 +224,7 @@ export const deepReasoningTools = {
         registerTool: false,
         async execute(params, ctx) {
             const args = BuildDeepReasoningMessageParamsSchema.parse(params);
-            const userId = ctx?.userId || "default";
-            const generating = selectGeneratingDeepReasoning(userId, args.newsId);
+            const generating = selectGeneratingDeepReasoning(args.newsId, "CN", args.sessionId);
             if (generating) {
                 return JSON.stringify({
                     success: true,
@@ -213,7 +260,7 @@ export const deepReasoningTools = {
             const args = SaveDeepReasoningParamsSchema.parse(params);
             const userId = ctx?.userId || "default";
             if (args.status === "generating") {
-                const generating = selectGeneratingDeepReasoning(userId, args.sourceId);
+                const generating = selectGeneratingDeepReasoning(args.sourceId, args.market, args.sessionId);
                 if (generating) {
                     return JSON.stringify({ success: true, skipped: true, reason: "already_generating", data: generating });
                 }

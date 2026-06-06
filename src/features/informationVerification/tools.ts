@@ -77,15 +77,52 @@ function buildInformationVerificationMessage(args: BuildInformationVerificationM
 	});
 }
 
-function selectGeneratingInformationVerification(userId: string, sourceId: string) {
+function selectGeneratingInformationVerification(sourceId: string, sessionId?: string) {
 	const db = getDB();
+	const normalizedSessionId = sessionId?.trim() || "";
+	if (normalizedSessionId) {
+		const bySession = db.prepare(`
+			SELECT id, sourceId, sourceTitle, sessionId, status, content, createdAt, updatedAt
+			FROM news_fact_check_analysis
+			WHERE sourceId = ? AND sessionId = ? AND status = 'generating'
+			ORDER BY updatedAt DESC, createdAt DESC
+			LIMIT 1
+		`).get(sourceId, normalizedSessionId);
+		if (bySession) return bySession;
+	}
+
 	return db.prepare(`
 		SELECT id, sourceId, sourceTitle, sessionId, status, content, createdAt, updatedAt
 		FROM news_fact_check_analysis
-		WHERE userId = ? AND sourceId = ? AND status = 'generating'
+		WHERE sourceId = ? AND status = 'generating'
 		ORDER BY updatedAt DESC, createdAt DESC
 		LIMIT 1
-	`).get(userId, sourceId);
+	`).get(sourceId);
+}
+
+function selectInformationVerificationForUpdate(sourceId: string, sessionId: string) {
+	const db = getDB();
+	if (sessionId) {
+		const bySession = db.prepare(`
+			SELECT id, sourceId, sourceTitle, sessionId, status, content, createdAt, updatedAt
+			FROM news_fact_check_analysis
+			WHERE sourceId = ? AND sessionId = ?
+			ORDER BY updatedAt DESC, createdAt DESC
+			LIMIT 1
+		`).get(sourceId, sessionId);
+		if (bySession) return bySession as { id: string; sourceTitle: string };
+	}
+
+	const generating = selectGeneratingInformationVerification(sourceId) as { id: string; sourceTitle: string } | undefined;
+	if (generating) return generating;
+
+	return db.prepare(`
+		SELECT id, sourceId, sourceTitle, sessionId, status, content, createdAt, updatedAt
+		FROM news_fact_check_analysis
+		WHERE sourceId = ?
+		ORDER BY updatedAt DESC, createdAt DESC
+		LIMIT 1
+	`).get(sourceId) as { id: string; sourceTitle: string } | undefined;
 }
 
 function saveInformationVerificationRecord(
@@ -101,23 +138,37 @@ function saveInformationVerificationRecord(
 	const db = getDB();
 	const id = randomUUID();
 	const sessionId = args.sessionId?.trim() || "";
+	const existing = selectInformationVerificationForUpdate(args.sourceId, sessionId);
+
+	if (existing) {
+		const sourceTitle = args.sourceTitle.trim() || existing.sourceTitle || "";
+		db.prepare(`
+			UPDATE news_fact_check_analysis
+			SET sourceTitle = ?,
+				sessionId = CASE WHEN ? != '' THEN ? ELSE sessionId END,
+				status = ?,
+				content = ?,
+				updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
+			WHERE id = ?
+		`).run(sourceTitle, sessionId, sessionId, args.status, args.content, existing.id);
+
+		return db.prepare(`
+			SELECT id, sourceId, 'verification' AS analysisType, sourceTitle, sessionId, status, content, createdAt, updatedAt
+			FROM news_fact_check_analysis
+			WHERE id = ?
+		`).get(existing.id);
+	}
 
 	db.prepare(`
 		INSERT INTO news_fact_check_analysis (id, sourceId, sourceTitle, userId, sessionId, status, content)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(sourceId, userId) DO UPDATE SET
-			sourceTitle = CASE WHEN excluded.sourceTitle != '' THEN excluded.sourceTitle ELSE news_fact_check_analysis.sourceTitle END,
-			sessionId = CASE WHEN excluded.sessionId != '' THEN excluded.sessionId ELSE news_fact_check_analysis.sessionId END,
-			status = excluded.status,
-			content = excluded.content,
-			updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
 	`).run(id, args.sourceId, args.sourceTitle, userId, sessionId, args.status, args.content);
 
 	return db.prepare(`
 		SELECT id, sourceId, 'verification' AS analysisType, sourceTitle, sessionId, status, content, createdAt, updatedAt
 		FROM news_fact_check_analysis
-		WHERE userId = ? AND sourceId = ?
-	`).get(userId, args.sourceId);
+		WHERE id = ?
+	`).get(id);
 }
 
 export const informationVerificationTools: Record<string, RuntimeTool> = {
@@ -194,10 +245,10 @@ export const informationVerificationTools: Record<string, RuntimeTool> = {
 			const row = db.prepare(`
 				SELECT id, sourceId, sourceTitle, sessionId, status, createdAt, updatedAt
 				FROM news_fact_check_analysis
-				WHERE userId = ? AND sessionId = ? AND sourceId = ?
+				WHERE sessionId = ? AND sourceId = ?
 				ORDER BY updatedAt DESC, createdAt DESC
 				LIMIT 1
-			`).get(ctx?.userId || "default", args.sessionId, args.sourceId);
+			`).get(args.sessionId, args.sourceId);
 			return JSON.stringify({ success: true, data: row || null });
 		}
 	},
@@ -209,8 +260,7 @@ export const informationVerificationTools: Record<string, RuntimeTool> = {
 		registerTool: false,
 		async execute(params, ctx) {
 			const args = BuildInformationVerificationMessageParamsSchema.parse(params);
-			const userId = ctx?.userId || "default";
-			const generating = selectGeneratingInformationVerification(userId, args.newsId);
+			const generating = selectGeneratingInformationVerification(args.newsId, args.sessionId);
 			if (generating) {
 				return JSON.stringify({
 					success: true,
@@ -246,7 +296,7 @@ export const informationVerificationTools: Record<string, RuntimeTool> = {
 			const args = SaveInformationVerificationParamsSchema.parse(params);
 			const userId = ctx?.userId || "default";
 			if (args.status === "generating") {
-				const generating = selectGeneratingInformationVerification(userId, args.sourceId);
+				const generating = selectGeneratingInformationVerification(args.sourceId, args.sessionId);
 				if (generating) {
 					return JSON.stringify({ success: true, skipped: true, reason: "already_generating", data: generating });
 				}

@@ -120,17 +120,49 @@ function selectLatestStockAnalysis(
 
 function selectLatestGeneratingStockAnalysis(
 	db: ReturnType<typeof getDB>,
-	userId: string,
 	stock_code: string,
-	market: string
+	market: string,
+	sessionId?: string
 ): StockAiAnalysis | undefined {
+	const normalizedSessionId = sessionId?.trim() || "";
+	if (normalizedSessionId) {
+		const bySession = db.prepare(`
+			SELECT id, stock_code, stock_name, market, sessionId, status, content, createdAt, updatedAt
+			FROM stock_ai_analysis
+			WHERE stock_code = ? AND market = ? AND sessionId = ? AND status = 'generating'
+			ORDER BY updatedAt DESC, createdAt DESC
+			LIMIT 1
+		`).get(stock_code, market, normalizedSessionId) as StockAiAnalysis | undefined;
+		if (bySession) return bySession;
+	}
+
 	return db.prepare(`
 		SELECT id, stock_code, stock_name, market, sessionId, status, content, createdAt, updatedAt
 		FROM stock_ai_analysis
-		WHERE userId = ? AND stock_code = ? AND market = ? AND status = 'generating'
+		WHERE stock_code = ? AND market = ? AND status = 'generating'
 		ORDER BY updatedAt DESC, createdAt DESC
 		LIMIT 1
-	`).get(userId, stock_code, market) as StockAiAnalysis | undefined;
+	`).get(stock_code, market) as StockAiAnalysis | undefined;
+}
+
+function selectStockAnalysisForUpdate(
+	db: ReturnType<typeof getDB>,
+	stock_code: string,
+	market: string,
+	sessionId: string
+): StockAiAnalysis | undefined {
+	if (sessionId) {
+		const bySession = db.prepare(`
+			SELECT id, stock_code, stock_name, market, sessionId, status, content, createdAt, updatedAt
+			FROM stock_ai_analysis
+			WHERE stock_code = ? AND market = ? AND sessionId = ?
+			ORDER BY updatedAt DESC, createdAt DESC
+			LIMIT 1
+		`).get(stock_code, market, sessionId) as StockAiAnalysis | undefined;
+		if (bySession) return bySession;
+	}
+
+	return selectLatestGeneratingStockAnalysis(db, stock_code, market);
 }
 
 function selectStockAnalysisDetail(
@@ -148,22 +180,20 @@ function selectStockAnalysisDetail(
 
 function selectStockAnalysisDetailBySession(
 	db: ReturnType<typeof getDB>,
-	userId: string,
 	sessionId: string,
 	stock_code: string
 ): StockAiAnalysisWithoutContent | undefined {
 	return db.prepare(`
 		SELECT id, stock_code, stock_name, market, sessionId, status, createdAt, updatedAt
 		FROM stock_ai_analysis
-		WHERE userId = ? AND sessionId = ? AND stock_code = ?
+		WHERE sessionId = ? AND stock_code = ?
 		ORDER BY updatedAt DESC, createdAt DESC
 		LIMIT 1
-	`).get(userId, sessionId, stock_code) as StockAiAnalysisWithoutContent | undefined;
+	`).get(sessionId, stock_code) as StockAiAnalysisWithoutContent | undefined;
 }
 
 function queryStockAnalysisStocks(
 	db: ReturnType<typeof getDB>,
-	userId: string,
 	market: string,
 	page: number,
 	pageSize: number
@@ -177,7 +207,7 @@ function queryStockAnalysisStocks(
 				COUNT(*) AS analysisCount,
 				MAX(updatedAt || '|' || createdAt || '|' || id) AS latestKey
 			FROM stock_ai_analysis
-			WHERE userId = ? AND market = ?
+			WHERE market = ?
 			GROUP BY stock_code, market
 		)
 		SELECT
@@ -194,19 +224,18 @@ function queryStockAnalysisStocks(
 			ON a.stock_code = g.stock_code
 			AND a.market = g.market
 			AND (a.updatedAt || '|' || a.createdAt || '|' || a.id) = g.latestKey
-		WHERE a.userId = ?
 		ORDER BY a.updatedAt DESC, a.createdAt DESC
 		LIMIT ? OFFSET ?
-	`).all(userId, market, userId, pageSize, offset) as StockAiAnalysisStockSummary[];
+	`).all(market, pageSize, offset) as StockAiAnalysisStockSummary[];
 	const countRow = db.prepare(`
 		SELECT COUNT(*) AS total
 		FROM (
 			SELECT 1
 			FROM stock_ai_analysis
-			WHERE userId = ? AND market = ?
+			WHERE market = ?
 			GROUP BY stock_code, market
 		)
-	`).get(userId, market) as { total: number };
+	`).get(market) as { total: number };
 	return { rows, total: countRow.total || 0 };
 }
 
@@ -229,18 +258,18 @@ export function saveStockAiAnalysisRecord(
 	const content = status === "completed" ? ensureChartPlaceholdersInBody(args.content) : args.content.trim();
 	const id = randomUUID();
 
-	const generating = status === "generating"
+	const existing = status === "generating"
 		? undefined
-		: selectLatestGeneratingStockAnalysis(db, userId, stock_code, args.market);
-	if (generating) {
+		: selectStockAnalysisForUpdate(db, stock_code, args.market, sessionId);
+	if (existing) {
 		db.prepare(`
 			UPDATE stock_ai_analysis
 			SET status = ?,
 				content = ?,
 				updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
-			WHERE id = ? AND userId = ?
-		`).run(status, content, generating.id, userId);
-		return selectStockAnalysisDetail(db, generating.id) as StockAiAnalysis;
+			WHERE id = ?
+		`).run(status, content, existing.id);
+		return selectStockAnalysisDetail(db, existing.id) as StockAiAnalysis;
 	}
 
 	db.prepare(`
@@ -251,8 +280,8 @@ export function saveStockAiAnalysisRecord(
 	return db.prepare(`
 		SELECT id, stock_code, stock_name, market, sessionId, status, content, createdAt, updatedAt
 		FROM stock_ai_analysis
-		WHERE userId = ? AND id = ?
-	`).get(userId, id) as StockAiAnalysis;
+		WHERE id = ?
+	`).get(id) as StockAiAnalysis;
 }
 
 function tableForArticleAnalysis(analysisType: ArticleAiAnalysis["analysisType"]): string {
@@ -261,7 +290,6 @@ function tableForArticleAnalysis(analysisType: ArticleAiAnalysis["analysisType"]
 
 function selectLatestArticleAnalysis(
 	db: ReturnType<typeof getDB>,
-	userId: string,
 	sourceId: string,
 	analysisType: ArticleAiAnalysis["analysisType"],
 	market: string = "CN"
@@ -271,18 +299,18 @@ function selectLatestArticleAnalysis(
 		return db.prepare(`
 			SELECT id, sourceId, ? AS analysisType, sourceTitle, market, sessionId, status, content, createdAt, updatedAt
 			FROM ${table}
-			WHERE userId = ? AND sourceId = ? AND market = ?
+			WHERE sourceId = ? AND market = ?
 			ORDER BY updatedAt DESC, createdAt DESC
 			LIMIT 1
-		`).get(analysisType, userId, sourceId, market) as ArticleAiAnalysis | undefined;
+		`).get(analysisType, sourceId, market) as ArticleAiAnalysis | undefined;
 	}
 	return db.prepare(`
 		SELECT id, sourceId, ? AS analysisType, sourceTitle, sessionId, status, content, createdAt, updatedAt
 		FROM ${table}
-		WHERE userId = ? AND sourceId = ?
+		WHERE sourceId = ?
 		ORDER BY updatedAt DESC, createdAt DESC
 		LIMIT 1
-	`).get(analysisType, userId, sourceId) as ArticleAiAnalysis | undefined;
+	`).get(analysisType, sourceId) as ArticleAiAnalysis | undefined;
 }
 
 export const stockAnalysisTools: Record<string, RuntimeTool> = {
@@ -307,8 +335,8 @@ export const stockAnalysisTools: Record<string, RuntimeTool> = {
 			const args = QueryStockAiAnalysisHistoryParamsSchema.parse(params ?? {});
 			const db = getDB();
 			const offset = (args.page - 1) * args.pageSize;
-			const conditions = ["userId = ?", "market = ?"];
-			const queryParams: unknown[] = [resolveToolUserId(ctx), args.market];
+			const conditions = ["market = ?"];
+			const queryParams: unknown[] = [args.market];
 			if (args.stock_code) {
 				conditions.push("stock_code = ?");
 				queryParams.push(normalizeStockCode(args.stock_code));
@@ -341,13 +369,13 @@ export const stockAnalysisTools: Record<string, RuntimeTool> = {
 	},
 	query_stock_ai_analysis_stocks: {
 		name: "query_stock_ai_analysis_stocks",
-		description: "分页查询当前用户所有已经产生过个股 AI 分析记录的股票列表。按股票代码和市场去重，返回每只股票最近一次分析记录 ID、最近状态、最近更新时间和累计分析次数；不返回分析正文 content。",
+		description: "分页查询所有已经产生过个股 AI 分析记录的股票列表。按股票代码和市场去重，返回每只股票最近一次分析记录 ID、最近状态、最近更新时间和累计分析次数；不返回分析正文 content。",
 		parameters: QueryStockAiAnalysisStocksParamsSchema,
 		registerTool: false,
 		async execute(params, ctx) {
 			const args = QueryStockAiAnalysisStocksParamsSchema.parse(params ?? {});
 			const db = getDB();
-			const { rows, total } = queryStockAnalysisStocks(db, resolveToolUserId(ctx), args.market, args.page, args.pageSize);
+			const { rows, total } = queryStockAnalysisStocks(db, args.market, args.page, args.pageSize);
 			return JSON.stringify({
 				success: true,
 				data: rows,
@@ -382,7 +410,6 @@ export const stockAnalysisTools: Record<string, RuntimeTool> = {
 			const db = getDB();
 			const data = selectStockAnalysisDetailBySession(
 				db,
-				resolveToolUserId(ctx),
 				args.sessionId,
 				normalizeStockCode(args.stock_code)
 			);
@@ -398,9 +425,8 @@ export const stockAnalysisTools: Record<string, RuntimeTool> = {
 		async execute(params, ctx) {
 			const args = BuildStockAiAnalysisMessageParamsSchema.parse(params);
 			const db = getDB();
-			const userId = resolveToolUserId(ctx);
 			const stock_code = normalizeStockCode(args.stock_code);
-			const generating = selectLatestGeneratingStockAnalysis(db, userId, stock_code, args.market);
+			const generating = selectLatestGeneratingStockAnalysis(db, stock_code, args.market, args.sessionId);
 			if (generating) {
 				return JSON.stringify({
 					success: true,
@@ -440,7 +466,7 @@ export const stockAnalysisTools: Record<string, RuntimeTool> = {
 			const userId = resolveToolUserId(ctx);
 			if (args.status === "generating") {
 				const stock_code = normalizeStockCode(args.stock_code);
-				const generating = selectLatestGeneratingStockAnalysis(db, userId, stock_code, args.market);
+				const generating = selectLatestGeneratingStockAnalysis(db, stock_code, args.market, args.sessionId);
 				if (generating) {
 					return JSON.stringify({ success: true, skipped: true, reason: "already_generating", data: generating });
 				}
@@ -457,7 +483,7 @@ export const stockAnalysisTools: Record<string, RuntimeTool> = {
 		async execute(params, ctx) {
 			const args = GetArticleAiAnalysisParamsSchema.parse(params);
 			const db = getDB();
-			const data = selectLatestArticleAnalysis(db, resolveToolUserId(ctx), args.sourceId, args.analysisType, args.market);
+			const data = selectLatestArticleAnalysis(db, args.sourceId, args.analysisType, args.market);
 			return JSON.stringify({ success: true, data: data || null });
 		}
 	},
@@ -469,25 +495,24 @@ export const stockAnalysisTools: Record<string, RuntimeTool> = {
 		async execute(params, ctx) {
 			const args = QueryArticleAiAnalysisHistoryParamsSchema.parse(params ?? {});
 			const db = getDB();
-			const userId = resolveToolUserId(ctx);
 			const table = tableForArticleAnalysis(args.analysisType);
 			const offset = (args.page - 1) * args.pageSize;
 			const marketCondition = args.analysisType === "deduction" ? " AND market = ?" : "";
 			const queryParams = args.analysisType === "deduction"
-				? [args.analysisType, userId, args.market, args.pageSize, offset]
-				: [args.analysisType, userId, args.pageSize, offset];
+				? [args.analysisType, args.market, args.pageSize, offset]
+				: [args.analysisType, args.pageSize, offset];
 			const rows = db.prepare(`
 					SELECT id, sourceId, ? AS analysisType, sourceTitle, ${args.analysisType === "deduction" ? "market," : ""} sessionId, status, createdAt, updatedAt
 				FROM ${table}
-				WHERE userId = ?${marketCondition}
+				WHERE 1 = 1${marketCondition}
 				ORDER BY updatedAt DESC, createdAt DESC
 				LIMIT ? OFFSET ?
 			`).all(...queryParams);
-			const countParams = args.analysisType === "deduction" ? [userId, args.market] : [userId];
+			const countParams = args.analysisType === "deduction" ? [args.market] : [];
 			const countRow = db.prepare(`
 				SELECT COUNT(*) AS total
 				FROM ${table}
-				WHERE userId = ?${marketCondition}
+				WHERE 1 = 1${marketCondition}
 			`).get(...countParams) as { total: number };
 			const total = countRow.total || 0;
 
