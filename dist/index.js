@@ -12,7 +12,7 @@ function registerFeatureTools(api) {
         return;
     registeredToolApis.add(api);
     Object.entries(allFeaturesTools).forEach(([name, tool]) => {
-        if (tool.registerTool === false)
+        if (tool.registerTool === false && tool.agentToolTarget !== "main")
             return;
         const registerable = {
             name,

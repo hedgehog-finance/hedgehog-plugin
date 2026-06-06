@@ -14,7 +14,7 @@ function registerFeatureTools(api: OpenClawPluginApi): void {
 	registeredToolApis.add(api);
 
 	Object.entries(allFeaturesTools).forEach(([name, tool]) => {
-		if (tool.registerTool === false) return;
+		if (tool.registerTool === false && tool.agentToolTarget !== "main") return;
 		const registerable: AnyAgentTool = {
 			name,
 			label: tool.label || tool.description,
