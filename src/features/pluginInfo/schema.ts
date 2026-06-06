@@ -4,13 +4,32 @@ export const GetPluginVersionParamsSchema = z.object({}).nullish();
 
 export const GetSkillVersionsParamsSchema = z.object({}).nullish();
 
-export const UpdateSkillVersionsParamsSchema = z.object({
-	versions: z.record(z.string()).optional(),
-	skills: z.array(z.object({
+function parseJsonString(value: unknown): unknown {
+	if (typeof value !== "string") return value;
+	try {
+		return JSON.parse(value);
+	} catch {
+		return value;
+	}
+}
+
+const SkillVersionsRecordSchema = z.preprocess(
+	parseJsonString,
+	z.record(z.string())
+);
+
+const SkillVersionsArraySchema = z.preprocess(
+	parseJsonString,
+	z.array(z.object({
 		name: z.string(),
 		version: z.string()
-	})).optional()
-}).refine(params => Boolean(params.versions || params.skills), {
+	}))
+);
+
+export const UpdateSkillVersionsParamsSchema = z.preprocess(parseJsonString, z.object({
+	versions: SkillVersionsRecordSchema.optional(),
+	skills: SkillVersionsArraySchema.optional()
+})).refine(params => Boolean(params.versions || params.skills), {
 	message: "versions or skills is required"
 });
 export type UpdateSkillVersionsParams = z.infer<typeof UpdateSkillVersionsParamsSchema>;

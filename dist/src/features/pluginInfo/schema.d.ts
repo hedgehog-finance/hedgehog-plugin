@@ -1,9 +1,9 @@
 import { z } from "zod";
 export declare const GetPluginVersionParamsSchema: z.ZodOptional<z.ZodNullable<z.ZodObject<{}, "strip", z.ZodTypeAny, {}, {}>>>;
 export declare const GetSkillVersionsParamsSchema: z.ZodOptional<z.ZodNullable<z.ZodObject<{}, "strip", z.ZodTypeAny, {}, {}>>>;
-export declare const UpdateSkillVersionsParamsSchema: z.ZodEffects<z.ZodObject<{
-    versions: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
-    skills: z.ZodOptional<z.ZodArray<z.ZodObject<{
+export declare const UpdateSkillVersionsParamsSchema: z.ZodEffects<z.ZodEffects<z.ZodObject<{
+    versions: z.ZodOptional<z.ZodEffects<z.ZodRecord<z.ZodString, z.ZodString>, Record<string, string>, unknown>>;
+    skills: z.ZodOptional<z.ZodEffects<z.ZodArray<z.ZodObject<{
         name: z.ZodString;
         version: z.ZodString;
     }, "strip", z.ZodTypeAny, {
@@ -12,7 +12,10 @@ export declare const UpdateSkillVersionsParamsSchema: z.ZodEffects<z.ZodObject<{
     }, {
         name: string;
         version: string;
-    }>, "many">>;
+    }>, "many">, {
+        name: string;
+        version: string;
+    }[], unknown>>;
 }, "strip", z.ZodTypeAny, {
     versions?: Record<string, string> | undefined;
     skills?: {
@@ -20,28 +23,25 @@ export declare const UpdateSkillVersionsParamsSchema: z.ZodEffects<z.ZodObject<{
         version: string;
     }[] | undefined;
 }, {
-    versions?: Record<string, string> | undefined;
-    skills?: {
-        name: string;
-        version: string;
-    }[] | undefined;
+    versions?: unknown;
+    skills?: unknown;
 }>, {
     versions?: Record<string, string> | undefined;
     skills?: {
         name: string;
         version: string;
     }[] | undefined;
-}, {
+}, unknown>, {
     versions?: Record<string, string> | undefined;
     skills?: {
         name: string;
         version: string;
     }[] | undefined;
-}>;
+}, unknown>;
 export type UpdateSkillVersionsParams = z.infer<typeof UpdateSkillVersionsParamsSchema>;
-export declare const BuildUpdateSkillVersionsMessageParamsSchema: z.ZodEffects<z.ZodObject<{
-    versions: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
-    skills: z.ZodOptional<z.ZodArray<z.ZodObject<{
+export declare const BuildUpdateSkillVersionsMessageParamsSchema: z.ZodEffects<z.ZodEffects<z.ZodObject<{
+    versions: z.ZodOptional<z.ZodEffects<z.ZodRecord<z.ZodString, z.ZodString>, Record<string, string>, unknown>>;
+    skills: z.ZodOptional<z.ZodEffects<z.ZodArray<z.ZodObject<{
         name: z.ZodString;
         version: z.ZodString;
     }, "strip", z.ZodTypeAny, {
@@ -50,7 +50,10 @@ export declare const BuildUpdateSkillVersionsMessageParamsSchema: z.ZodEffects<z
     }, {
         name: string;
         version: string;
-    }>, "many">>;
+    }>, "many">, {
+        name: string;
+        version: string;
+    }[], unknown>>;
 }, "strip", z.ZodTypeAny, {
     versions?: Record<string, string> | undefined;
     skills?: {
@@ -58,22 +61,19 @@ export declare const BuildUpdateSkillVersionsMessageParamsSchema: z.ZodEffects<z
         version: string;
     }[] | undefined;
 }, {
-    versions?: Record<string, string> | undefined;
-    skills?: {
-        name: string;
-        version: string;
-    }[] | undefined;
+    versions?: unknown;
+    skills?: unknown;
 }>, {
     versions?: Record<string, string> | undefined;
     skills?: {
         name: string;
         version: string;
     }[] | undefined;
-}, {
+}, unknown>, {
     versions?: Record<string, string> | undefined;
     skills?: {
         name: string;
         version: string;
     }[] | undefined;
-}>;
+}, unknown>;
 export type BuildUpdateSkillVersionsMessageParams = z.infer<typeof BuildUpdateSkillVersionsMessageParamsSchema>;
