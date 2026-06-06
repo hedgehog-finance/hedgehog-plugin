@@ -1,7 +1,6 @@
 import path from "path";
 import * as os from "node:os";
 import { logger } from "./core/logger.js";
-import { ensureDailyMorningBriefingCron } from "./dailyMorningBriefingCron.js";
 import { ensureRegisteredToolsAllowedInConfig } from "./openclawConfig.js";
 let runtime = null;
 let dbPath = "";
@@ -40,7 +39,6 @@ export function setHedgehogRuntime(next) {
         logger.error({ err: e }, "Failed to resolve workspace");
     }
     void ensureAgentToolAllowConfig(next);
-    void ensureDailyMorningBriefingCron(next);
 }
 export function getDbPath() {
     if (!dbPath)

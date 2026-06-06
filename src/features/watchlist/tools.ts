@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 // @ts-ignore
 import { DatabaseSync } from "node:sqlite";
-import { z } from "openclaw/plugin-sdk/zod";
+import { z } from "zod";
 import { PluginRuntime } from "openclaw/plugin-sdk";
 import { getDB } from "../../core/database.js";
 import { logger } from "../../core/logger.js";
@@ -18,7 +18,9 @@ import {
 	SyncCategoriesParams,
 	SyncCategoriesParamsSchema,
 	BatchUpdateSortOrdersParams,
-	BatchUpdateSortOrdersParamsSchema
+	BatchUpdateSortOrdersParamsSchema,
+	GetIndustryListParamsSchema,
+	GetIndustryListParams
 } from "./schema.js";
 
 let watchlistMutationQueue: Promise<void> = Promise.resolve();
@@ -29,6 +31,14 @@ const GetWatchlistAgentToolSchema = {
 	properties: {
 		categoryId: { type: "string", description: "分类 ID，不传返回所有" },
 		categoryType: { type: "string", enum: ["industry", "theme"], description: "分类类型" }
+	}
+};
+
+const GetIndustryListAgentToolSchema = {
+	type: "object",
+	additionalProperties: false,
+	properties: {
+		type: { type: "string", enum: ["industry", "theme", ""], description: "分类类型：industry 行业，theme 主题，空字符串或不传表示全部" }
 	}
 };
 
@@ -108,7 +118,7 @@ function upsertStockClassificationCache(
 	const cacheCode = watchlistLogic._normalizeStockCodeForCache(stock.stock_code, stock.exchange);
 	const legacyCode = stock.stock_code.trim().toUpperCase().replace(/\.(SH|SS|SZ|HK|US)$/i, "");
 	db.prepare(`
-		INSERT OR REPLACE INTO global_stock_metadata (stock_code, exchange, stock_name, industryJson, themeJson)
+		INSERT OR REPLACE INTO stock_classification_cache (stock_code, exchange, stock_name, industry_classification, theme_classification)
 		VALUES (?, ?, ?, ?, ?)
 	`).run(
 		cacheCode,
@@ -119,7 +129,7 @@ function upsertStockClassificationCache(
 	);
 	if (legacyCode && legacyCode !== cacheCode) {
 		db.prepare(`
-			DELETE FROM global_stock_metadata WHERE stock_code = ? AND exchange = ?
+			DELETE FROM stock_classification_cache WHERE stock_code = ? AND exchange = ?
 		`).run(legacyCode, stock.exchange);
 	}
 }
@@ -173,12 +183,12 @@ function readWatchlistRows(db: DatabaseSync, args: GetWatchlistParams, userId?: 
 function attachWatchlistTags(db: DatabaseSync, stocks: WatchlistRow[]) {
 	return stocks.map(stock => {
 		const industries = db.prepare(`
-			SELECT c.name FROM watchlist_categories c
+			SELECT c.name FROM industry_theme_categories c
 			JOIN watchlist_industry_items i ON c.id = i.categoryId
 			WHERE i.watchlistId = ? ORDER BY i.weight DESC
 		`).all(stock.id) as { name: string }[];
 		const themes = db.prepare(`
-			SELECT c.name FROM watchlist_categories c
+			SELECT c.name FROM industry_theme_categories c
 			JOIN watchlist_theme_items t ON c.id = t.categoryId
 			WHERE t.watchlistId = ? ORDER BY t.weight DESC
 		`).all(stock.id) as { name: string }[];
@@ -402,12 +412,9 @@ export const watchlistTools = {
 				db.exec("BEGIN TRANSACTION");
 				try {
 					const info = db.prepare(`
-						UPDATE watchlist
-						SET isDeleted = 1,
-							updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
+						DELETE FROM watchlist
 						WHERE id = ?
 						  AND userId = ?
-						  AND isDeleted = 0
 					`).run(args.id, uId);
 
 					if (info.changes > 0) {
@@ -435,16 +442,49 @@ export const watchlistTools = {
 
 	get_watchlist: {
 		name: "get_watchlist",
-		description: "获取自选股列表",
+		label: "获取自选股",
+		description: "获取当前全部自选股列表及其行业、主题标签。",
 		parameters: GetWatchlistAgentToolSchema,
 		registerTool: true,
-		execute: async (rawArgs: GetWatchlistParams, ctx?: { userId: string }) => {
+		execute: async (rawArgs?: GetWatchlistParams, ctx?: { userId: string }) => {
 			try {
 				const args = GetWatchlistParamsSchema.parse(rawArgs ?? {});
 				const db = getDB();
 				const stocks = readWatchlistRows(db, args, ctx?.userId ? String(ctx.userId) : undefined);
 				const fullList = attachWatchlistTags(db, stocks);
 				return JSON.stringify({ success: true, data: fullList });
+			} catch (e: any) {
+				return JSON.stringify({ success: false, error: e.message });
+			}
+		}
+	},
+
+	get_industry_list: {
+		name: "get_industry_list",
+		label: "拉取申万一级行业分类或主题板块列表",
+		description: "拉取申万一级行业分类或主题板块列表。",
+		parameters: GetIndustryListAgentToolSchema,
+		registerTool: true,
+		execute: async (rawArgs?: GetIndustryListParams) => {
+			try {
+				const args = GetIndustryListParamsSchema.parse(rawArgs ?? {});
+				const db = getDB();
+				let query = "SELECT DISTINCT name FROM industry_theme_categories";
+				const params: any[] = [];
+				const conditions: string[] = [];
+
+				if (args.type && args.type !== "") {
+					conditions.push("type = ?");
+					params.push(args.type);
+				}
+
+				if (conditions.length > 0) {
+					query += ` WHERE ${conditions.join(" AND ")}`;
+				}
+				query += " ORDER BY name ASC";
+				const rows = db.prepare(query).all(...params) as { name: string }[];
+				const data = rows.map(r => r.name);
+				return JSON.stringify({ success: true, data });
 			} catch (e: any) {
 				return JSON.stringify({ success: false, error: e.message });
 			}
@@ -462,14 +502,14 @@ export const watchlistTools = {
 				const uId = String(ctx.userId);
 				const industryData = db.prepare(`
 					SELECT c.name as category_name, i.weight, w.stock_code
-					FROM watchlist_categories c
+					FROM industry_theme_categories c
 					JOIN watchlist_industry_items i ON c.id = i.categoryId
 					JOIN watchlist w ON i.watchlistId = w.id
 					WHERE i.userId = ? AND w.isDeleted = 0
 				`).all(uId) as any[];
 				const themeData = db.prepare(`
 					SELECT c.name as category_name, t.weight, w.stock_code
-					FROM watchlist_categories c
+					FROM industry_theme_categories c
 					JOIN watchlist_theme_items t ON c.id = t.categoryId
 					JOIN watchlist w ON t.watchlistId = w.id
 					WHERE t.userId = ? AND w.isDeleted = 0
@@ -504,14 +544,14 @@ export const watchlistTools = {
 				const uId = String(ctx.userId);
 				const industries = db.prepare(`
 					SELECT DISTINCT c.id, c.name, c.type, c.sortOrder
-					FROM watchlist_categories c
+					FROM industry_theme_categories c
 					JOIN watchlist_industry_items i ON c.id = i.categoryId
 					WHERE i.userId = ?
 					ORDER BY c.sortOrder ASC, c.name ASC
 				`).all(uId) as any[];
 				const themes = db.prepare(`
 					SELECT DISTINCT c.id, c.name, c.type, c.sortOrder
-					FROM watchlist_categories c
+					FROM industry_theme_categories c
 					JOIN watchlist_theme_items t ON c.id = t.categoryId
 					WHERE t.userId = ?
 					ORDER BY c.sortOrder ASC, c.name ASC
@@ -572,30 +612,38 @@ export const watchlistTools = {
 			const uId = String(ctx.userId);
 			db.exec("BEGIN TRANSACTION");
 			try {
+				const existing = db.prepare("SELECT name, type FROM industry_theme_categories WHERE userId = ?").all(uId) as { name: string, type: string }[];
+				const existingSet = new Set(existing.map(row => `${row.name}:${row.type}`));
+
+				const stmt = db.prepare(`
+					INSERT INTO industry_theme_categories (id, remoteId, userId, name, type, weight, sortOrder)
+					VALUES (?, ?, ?, ?, ?, 0, 0)
+					ON CONFLICT(userId, remoteId) DO UPDATE SET name = excluded.name, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
+					ON CONFLICT(userId, name, type) DO UPDATE SET remoteId = excluded.remoteId, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
+				`);
+
 				if (args.industries) {
 					for (const name of args.industries) {
-						db.prepare(`
-							INSERT INTO watchlist_categories (id, remoteId, userId, name, type, weight, sortOrder)
-							VALUES (?, ?, ?, ?, 'industry', 0, 0)
-							ON CONFLICT(userId, remoteId) DO UPDATE SET name = excluded.name, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
-							ON CONFLICT(userId, name, type) DO UPDATE SET remoteId = excluded.remoteId, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
-						`).run(randomUUID(), name, uId, name);
+						const key = `${name}:industry`;
+						if (!existingSet.has(key)) {
+							stmt.run(randomUUID(), name, uId, name, 'industry');
+							existingSet.add(key);
+						}
 					}
 				}
 				if (args.themes) {
 					for (const name of args.themes) {
-						db.prepare(`
-							INSERT INTO watchlist_categories (id, remoteId, userId, name, type, weight, sortOrder)
-							VALUES (?, ?, ?, ?, 'theme', 0, 0)
-							ON CONFLICT(userId, remoteId) DO UPDATE SET name = excluded.name, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
-							ON CONFLICT(userId, name, type) DO UPDATE SET remoteId = excluded.remoteId, updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
-						`).run(randomUUID(), name, uId, name);
+						const key = `${name}:theme`;
+						if (!existingSet.has(key)) {
+							stmt.run(randomUUID(), name, uId, name, 'theme');
+							existingSet.add(key);
+						}
 					}
 				}
 				db.exec("COMMIT");
 				return JSON.stringify({ success: true });
 			} catch (e: any) {
-				db.exec("ROLLBACK");
+				if (db.inTransaction) db.exec("ROLLBACK");
 				return JSON.stringify({ success: false, error: e.message });
 			}
 		}

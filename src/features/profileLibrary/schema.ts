@@ -1,4 +1,4 @@
-import { z } from "openclaw/plugin-sdk/zod";
+import { z } from "zod";
 
 export const AddProfileLibraryParamsSchema = z.object({
 	id: z.string().trim().min(1).optional().describe("资料库 ID，不传则自动生成"),

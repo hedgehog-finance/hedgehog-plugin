@@ -1,6 +1,6 @@
-import { z } from "openclaw/plugin-sdk/zod";
+import { z } from "zod";
 import { PluginRuntime } from "openclaw/plugin-sdk";
-import { AddToWatchlistParams, GetWatchlistParams, SyncCategoriesParams, BatchUpdateSortOrdersParams } from "./schema.js";
+import { AddToWatchlistParams, GetWatchlistParams, SyncCategoriesParams, BatchUpdateSortOrdersParams, GetIndustryListParams } from "./schema.js";
 export declare const watchlistTools: {
     add_to_watchlist: {
         name: string;
@@ -8,23 +8,19 @@ export declare const watchlistTools: {
         parameters: z.ZodObject<{
             stock_code: z.ZodString;
             stock_name: z.ZodString;
-            exchange: z.ZodEnum<{
-                SSE: "SSE";
-                SZSE: "SZSE";
-                HKEX: "HKEX";
-                NASDAQ: "NASDAQ";
-                NYSE: "NYSE";
-                AMEX: "AMEX";
-            }>;
-            market: z.ZodEnum<{
-                A_SHARE: "A_SHARE";
-                US_SHARE: "US_SHARE";
-                HK_SHARE: "HK_SHARE";
-                FUTURES: "FUTURES";
-                FUND: "FUND";
-                OTHER: "OTHER";
-            }>;
-        }, z.core.$strip>;
+            exchange: z.ZodEnum<["SSE", "SZSE", "NASDAQ", "NYSE", "AMEX", "HKEX"]>;
+            market: z.ZodEnum<["A_SHARE", "US_SHARE", "HK_SHARE", "FUTURES", "FUND", "OTHER"]>;
+        }, "strip", z.ZodTypeAny, {
+            stock_code: string;
+            stock_name: string;
+            market: "A_SHARE" | "US_SHARE" | "HK_SHARE" | "FUTURES" | "FUND" | "OTHER";
+            exchange: "SSE" | "SZSE" | "HKEX" | "NASDAQ" | "NYSE" | "AMEX";
+        }, {
+            stock_code: string;
+            stock_name: string;
+            market: "A_SHARE" | "US_SHARE" | "HK_SHARE" | "FUTURES" | "FUND" | "OTHER";
+            exchange: "SSE" | "SZSE" | "HKEX" | "NASDAQ" | "NYSE" | "AMEX";
+        }>;
         registerTool: boolean;
         execute: (args: AddToWatchlistParams, ctx: {
             userId: string;
@@ -38,24 +34,34 @@ export declare const watchlistTools: {
             stocks: z.ZodArray<z.ZodObject<{
                 stock_code: z.ZodString;
                 stock_name: z.ZodString;
-                exchange: z.ZodEnum<{
-                    SSE: "SSE";
-                    SZSE: "SZSE";
-                    HKEX: "HKEX";
-                    NASDAQ: "NASDAQ";
-                    NYSE: "NYSE";
-                    AMEX: "AMEX";
-                }>;
-                market: z.ZodEnum<{
-                    A_SHARE: "A_SHARE";
-                    US_SHARE: "US_SHARE";
-                    HK_SHARE: "HK_SHARE";
-                    FUTURES: "FUTURES";
-                    FUND: "FUND";
-                    OTHER: "OTHER";
-                }>;
-            }, z.core.$strip>>;
-        }, z.core.$strip>;
+                exchange: z.ZodEnum<["SSE", "SZSE", "NASDAQ", "NYSE", "AMEX", "HKEX"]>;
+                market: z.ZodEnum<["A_SHARE", "US_SHARE", "HK_SHARE", "FUTURES", "FUND", "OTHER"]>;
+            }, "strip", z.ZodTypeAny, {
+                stock_code: string;
+                stock_name: string;
+                market: "A_SHARE" | "US_SHARE" | "HK_SHARE" | "FUTURES" | "FUND" | "OTHER";
+                exchange: "SSE" | "SZSE" | "HKEX" | "NASDAQ" | "NYSE" | "AMEX";
+            }, {
+                stock_code: string;
+                stock_name: string;
+                market: "A_SHARE" | "US_SHARE" | "HK_SHARE" | "FUTURES" | "FUND" | "OTHER";
+                exchange: "SSE" | "SZSE" | "HKEX" | "NASDAQ" | "NYSE" | "AMEX";
+            }>, "many">;
+        }, "strip", z.ZodTypeAny, {
+            stocks: {
+                stock_code: string;
+                stock_name: string;
+                market: "A_SHARE" | "US_SHARE" | "HK_SHARE" | "FUTURES" | "FUND" | "OTHER";
+                exchange: "SSE" | "SZSE" | "HKEX" | "NASDAQ" | "NYSE" | "AMEX";
+            }[];
+        }, {
+            stocks: {
+                stock_code: string;
+                stock_name: string;
+                market: "A_SHARE" | "US_SHARE" | "HK_SHARE" | "FUTURES" | "FUND" | "OTHER";
+                exchange: "SSE" | "SZSE" | "HKEX" | "NASDAQ" | "NYSE" | "AMEX";
+            }[];
+        }>;
         registerTool: boolean;
         execute: (args: {
             stocks: AddToWatchlistParams[];
@@ -69,7 +75,11 @@ export declare const watchlistTools: {
         description: string;
         parameters: z.ZodObject<{
             id: z.ZodString;
-        }, z.core.$strip>;
+        }, "strip", z.ZodTypeAny, {
+            id: string;
+        }, {
+            id: string;
+        }>;
         registerTool: boolean;
         execute: (args: {
             id: string;
@@ -79,6 +89,7 @@ export declare const watchlistTools: {
     };
     get_watchlist: {
         name: string;
+        label: string;
         description: string;
         parameters: {
             type: string;
@@ -96,14 +107,32 @@ export declare const watchlistTools: {
             };
         };
         registerTool: boolean;
-        execute: (rawArgs: GetWatchlistParams, ctx?: {
+        execute: (rawArgs?: GetWatchlistParams, ctx?: {
             userId: string;
         }) => Promise<string>;
+    };
+    get_industry_list: {
+        name: string;
+        label: string;
+        description: string;
+        parameters: {
+            type: string;
+            additionalProperties: boolean;
+            properties: {
+                type: {
+                    type: string;
+                    enum: string[];
+                    description: string;
+                };
+            };
+        };
+        registerTool: boolean;
+        execute: (rawArgs?: GetIndustryListParams) => Promise<string>;
     };
     get_thematic_dashboard: {
         name: string;
         description: string;
-        parameters: z.ZodObject<{}, z.core.$strip>;
+        parameters: z.ZodObject<{}, "strip", z.ZodTypeAny, {}, {}>;
         registerTool: boolean;
         execute: (_args: {}, ctx: {
             userId: string;
@@ -112,7 +141,7 @@ export declare const watchlistTools: {
     get_watchlist_tabs: {
         name: string;
         description: string;
-        parameters: z.ZodObject<{}, z.core.$strip>;
+        parameters: z.ZodObject<{}, "strip", z.ZodTypeAny, {}, {}>;
         registerTool: boolean;
         execute: (_args: {}, ctx: {
             userId: string;
@@ -121,7 +150,7 @@ export declare const watchlistTools: {
     smart_reorder_watchlist: {
         name: string;
         description: string;
-        parameters: z.ZodObject<{}, z.core.$strip>;
+        parameters: z.ZodObject<{}, "strip", z.ZodTypeAny, {}, {}>;
         registerTool: boolean;
         execute: (_args: {}, ctx: {
             userId: string;
@@ -132,9 +161,15 @@ export declare const watchlistTools: {
         name: string;
         description: string;
         parameters: z.ZodObject<{
-            industries: z.ZodOptional<z.ZodArray<z.ZodString>>;
-            themes: z.ZodOptional<z.ZodArray<z.ZodString>>;
-        }, z.core.$strip>;
+            industries: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
+            themes: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
+        }, "strip", z.ZodTypeAny, {
+            industries?: string[] | undefined;
+            themes?: string[] | undefined;
+        }, {
+            industries?: string[] | undefined;
+            themes?: string[] | undefined;
+        }>;
         registerTool: boolean;
         execute: (args: SyncCategoriesParams, ctx: {
             userId: string;
@@ -144,8 +179,12 @@ export declare const watchlistTools: {
         name: string;
         description: string;
         parameters: z.ZodObject<{
-            orderedIds: z.ZodArray<z.ZodString>;
-        }, z.core.$strip>;
+            orderedIds: z.ZodArray<z.ZodString, "many">;
+        }, "strip", z.ZodTypeAny, {
+            orderedIds: string[];
+        }, {
+            orderedIds: string[];
+        }>;
         registerTool: boolean;
         execute: (args: BatchUpdateSortOrdersParams, ctx: {
             userId: string;
@@ -154,7 +193,7 @@ export declare const watchlistTools: {
     reset_watchlist_classification: {
         name: string;
         description: string;
-        parameters: z.ZodObject<{}, z.core.$strip>;
+        parameters: z.ZodObject<{}, "strip", z.ZodTypeAny, {}, {}>;
         registerTool: boolean;
         execute: (_args: {}, ctx: {
             userId: string;

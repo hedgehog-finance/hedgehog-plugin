@@ -9,7 +9,14 @@
   "contracts": {
     "tools": [
       "get_watchlist",
-      "save_daily_morning_briefing"
+      "get_industry_list",
+      "save_daily_morning_briefing",
+      "save_stock_ai_analysis",
+      "save_information_verification",
+      "save_article_deep_reasoning_analysis",
+      "get_stock_basic_info",
+      "get_stock_note",
+      "update_skill_versions"
     ]
   },
   "setup": {

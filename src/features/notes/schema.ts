@@ -1,4 +1,4 @@
-import { z } from "openclaw/plugin-sdk/zod";
+import { z } from "zod";
 
 const ExchangeEnum = z.enum(["SSE", "SZSE", "NASDAQ", "NYSE", "AMEX", "HKEX"]);
 const ProfileLibraryInputSchema = z.object({
@@ -73,3 +73,8 @@ export interface StockNote extends StockNoteRow {
 		title: string;
 	}[];
 }
+
+export const GetStockNoteParamsSchema = z.object({
+	stock_code: z.string().trim().min(1).describe("股票代码")
+});
+export type GetStockNoteParams = z.infer<typeof GetStockNoteParamsSchema>;

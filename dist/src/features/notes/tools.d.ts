@@ -1,5 +1,6 @@
 interface RuntimeTool {
     name: string;
+    label?: string;
     description: string;
     parameters: unknown;
     registerTool?: boolean;

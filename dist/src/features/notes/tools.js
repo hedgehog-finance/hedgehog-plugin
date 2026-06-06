@@ -1,6 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { getDB } from "../../core/database.js";
-import { AddStockNoteParamsSchema, DeleteStockNoteParamsSchema, GetStockNoteByIdParamsSchema, QueryStockNotesParamsSchema, UpdateStockNoteParamsSchema } from "./schema.js";
+import { AddStockNoteParamsSchema, DeleteStockNoteParamsSchema, GetStockNoteByIdParamsSchema, QueryStockNotesParamsSchema, UpdateStockNoteParamsSchema, GetStockNoteParamsSchema } from "./schema.js";
+const GetStockNoteAgentToolSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["stock_code"],
+    properties: {
+        stock_code: { type: "string", description: "股票代码，例如：000001.SZ 或 600000.SH" }
+    }
+};
 function escapeLikePattern(value) {
     return value.replace(/[\\%_]/g, (char) => `\\${char}`);
 }
@@ -287,6 +295,31 @@ export const noteTools = {
 					LIMIT ? OFFSET ?
 				`).all(...params, pageSize, offset);
                 return successWithPagination(attachProfileLibraries(db, uId, rows), page, pageSize, total);
+            }
+            catch (e) {
+                return JSON.stringify({ success: false, error: e.message });
+            }
+        }
+    },
+    get_stock_note: {
+        name: "get_stock_note",
+        label: "拉取股票笔记",
+        description: "根据股票代码拉取股票笔记。",
+        parameters: GetStockNoteAgentToolSchema,
+        registerTool: true,
+        execute: async (rawArgs) => {
+            try {
+                const args = GetStockNoteParamsSchema.parse(rawArgs);
+                const db = getDB();
+                const code = args.stock_code.trim().toUpperCase().replace(/\.SS$/i, ".SH");
+                const rows = db.prepare(`
+					SELECT sn.id, sn.note, sn.createdAt, sn.updatedAt
+					FROM stock_notes sn
+					JOIN watchlist w ON w.id = sn.watchlistId
+					WHERE w.stock_code = ? AND w.isDeleted = 0
+					ORDER BY sn.updatedAt DESC, sn.createdAt DESC
+				`).all(code);
+                return JSON.stringify({ success: true, data: rows });
             }
             catch (e) {
                 return JSON.stringify({ success: false, error: e.message });

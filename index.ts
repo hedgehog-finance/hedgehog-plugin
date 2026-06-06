@@ -3,6 +3,9 @@ import { jsonResult, type AnyAgentTool, type OpenClawPluginApi } from "openclaw/
 import { hedgehogFinancePlugin } from "./src/channel.js";
 import { setHedgehogRuntime } from "./src/runtime.js";
 import { allFeaturesTools } from "./src/features/index.js";
+import { getDB } from "./src/core/database.js";
+import { logger } from "./src/core/logger.js";
+import { registerDailyMorningBriefingCron } from "./src/dailyMorningBriefingCron.js";
 
 const registeredToolApis = new WeakSet<OpenClawPluginApi>();
 
@@ -19,15 +22,29 @@ function registerFeatureTools(api: OpenClawPluginApi): void {
 			parameters: tool.parameters as any,
 			async execute(_toolCallId, params) {
 				const result = await tool.execute(params);
-				try {
-					return jsonResult(JSON.parse(result));
-				} catch {
-					return jsonResult({ success: true, data: result });
+				const payload: unknown = JSON.parse(result);
+				if (
+					payload &&
+					typeof payload === "object" &&
+					"success" in payload &&
+					payload.success === false
+				) {
+					const error = "error" in payload ? payload.error : undefined;
+					throw new Error(typeof error === "string" ? error : `${name} failed`);
 				}
+				return jsonResult(payload);
 			}
 		};
 		api.registerTool(registerable, { name });
 	});
+}
+
+function initializeDatabase(): void {
+	try {
+		getDB();
+	} catch (err) {
+		logger.error({ err }, "Failed to initialize Hedgehog database");
+	}
 }
 
 export default defineChannelPluginEntry({
@@ -37,12 +54,15 @@ export default defineChannelPluginEntry({
 	plugin: hedgehogFinancePlugin,
 	setRuntime(runtime) {
 		setHedgehogRuntime(runtime);
+		initializeDatabase();
 	},
 	registerCliMetadata(api) {
 		registerFeatureTools(api);
 	},
 	registerFull(api) {
 		setHedgehogRuntime(api.runtime);
+		initializeDatabase();
+		registerDailyMorningBriefingCron(api);
 		registerFeatureTools(api);
 	},
 });

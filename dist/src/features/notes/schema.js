@@ -1,4 +1,4 @@
-import { z } from "openclaw/plugin-sdk/zod";
+import { z } from "zod";
 const ExchangeEnum = z.enum(["SSE", "SZSE", "NASDAQ", "NYSE", "AMEX", "HKEX"]);
 const ProfileLibraryInputSchema = z.object({
     id: z.string().trim().min(1).describe("资料库 ID"),
@@ -36,5 +36,8 @@ export const QueryStockNotesParamsSchema = z.object({
     keyword: z.string().trim().optional().describe("模糊查询关键词，可匹配股票代码、股票名称或笔记内容"),
     page: z.number().int().min(1).optional().describe("页码，从 1 开始，默认 1"),
     pageSize: z.number().int().min(1).max(100).optional().describe("每页数量，默认 20，最大 100")
+});
+export const GetStockNoteParamsSchema = z.object({
+    stock_code: z.string().trim().min(1).describe("股票代码")
 });
 //# sourceMappingURL=schema.js.map

@@ -153,6 +153,8 @@ function parseStockAnalysisRequest(text, chatId) {
         try {
             const parsedContext = JSON.parse(cwContext);
             if (parsedContext && typeof parsedContext === "object" && !Array.isArray(parsedContext)) {
+                if (parsedContext.saveMode === "tool")
+                    return null;
                 stock_code = typeof parsedContext.stock_code === "string" ? parsedContext.stock_code.trim() : "";
                 stock_name = typeof parsedContext.stock_name === "string" ? parsedContext.stock_name.trim() : "";
             }
@@ -167,8 +169,8 @@ function parseStockAnalysisRequest(text, chatId) {
         try {
             const db = getDB();
             const normalizedCode = stock_code.toUpperCase().replace(/\.SS$/i, ".SH");
-            // Query global_stock_metadata first
-            let row = db.prepare(`SELECT stock_name FROM global_stock_metadata WHERE stock_code = ? OR stock_code = ? LIMIT 1`)
+            // Query stock classification cache first
+            let row = db.prepare(`SELECT stock_name FROM stock_classification_cache WHERE stock_code = ? OR stock_code = ? LIMIT 1`)
                 .get(normalizedCode, normalizedCode.replace(/\.SH$/i, "").replace(/\.SZ$/i, "").replace(/\.HK$/i, ""));
             if (!row) {
                 // Fallback to watchlist

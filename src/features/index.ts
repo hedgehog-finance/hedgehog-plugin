@@ -4,6 +4,9 @@ import { noteTools } from "./notes/tools.js";
 import { stockAnalysisTools } from "./stockAnalysis/tools.js";
 import { pluginInfoTools } from "./pluginInfo/tools.js";
 import { dailyMorningBriefingTools } from "./dailyMorningBriefing/tools.js";
+import { stockBasicTools } from "./stockBasic/tools.js";
+import { informationVerificationTools } from "./informationVerification/tools.js";
+import { deepReasoningTools } from "./deepReasoning/tools.js";
 
 export interface RuntimeTool {
     name: string;
@@ -20,5 +23,8 @@ export const allFeaturesTools: Record<string, RuntimeTool> = {
     ...noteTools,
     ...stockAnalysisTools,
     ...pluginInfoTools,
-    ...dailyMorningBriefingTools
+    ...dailyMorningBriefingTools,
+    ...stockBasicTools,
+    ...informationVerificationTools,
+    ...deepReasoningTools
 };

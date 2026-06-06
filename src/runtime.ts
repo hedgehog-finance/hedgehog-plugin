@@ -2,7 +2,6 @@ import type { PluginRuntime } from "openclaw/plugin-sdk/channel-core";
 import path from "path";
 import * as os from "node:os";
 import { logger } from "./core/logger.js";
-import { ensureDailyMorningBriefingCron } from "./dailyMorningBriefingCron.js";
 import { ensureRegisteredToolsAllowedInConfig } from "./openclawConfig.js";
 
 let runtime: PluginRuntime | null = null;
@@ -43,7 +42,6 @@ export function setHedgehogRuntime(next: PluginRuntime): void {
 	}
 
 	void ensureAgentToolAllowConfig(next);
-	void ensureDailyMorningBriefingCron(next);
 }
 
 export function getDbPath(): string {

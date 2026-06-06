@@ -47,7 +47,7 @@ function getCachedClassificationRow(db, stock_code, exchange) {
     const cacheCode = normalizeStockCodeForCache(stock_code, exchange);
     const legacyCode = legacyStockCodeWithoutSuffix(stock_code);
     const stmt = db.prepare(`
-		SELECT industryJson, themeJson FROM global_stock_metadata
+		SELECT industry_classification, theme_classification FROM stock_classification_cache
 		WHERE stock_code = ? AND exchange = ?
 	`);
     return (stmt.get(cacheCode, exchange) || (legacyCode !== cacheCode ? stmt.get(legacyCode, exchange) : undefined));
@@ -152,11 +152,11 @@ export const watchlistLogic = {
     async getStockClassification(rt, stock_name, stock_code, exchange, _userId) {
         const db = getDB();
         const cached = getCachedClassificationRow(db, stock_code, exchange);
-        if (cached && cached.industryJson) {
+        if (cached && cached.industry_classification) {
             try {
                 return watchlistLogic._normalizeCachedClassification({
-                    industry: JSON.parse(cached.industryJson),
-                    theme: JSON.parse(cached.themeJson || '[]'),
+                    industry: JSON.parse(cached.industry_classification),
+                    theme: JSON.parse(cached.theme_classification || '[]'),
                     weight: 50
                 });
             }
@@ -172,11 +172,11 @@ export const watchlistLogic = {
         const pendingStocks = [];
         stocks.forEach((stock, idx) => {
             const cached = getCachedClassificationRow(db, stock.stock_code, stock.exchange);
-            if (cached && cached.industryJson) {
+            if (cached && cached.industry_classification) {
                 try {
                     results[idx] = watchlistLogic._normalizeCachedClassification({
-                        industry: JSON.parse(cached.industryJson),
-                        theme: JSON.parse(cached.themeJson || '[]'),
+                        industry: JSON.parse(cached.industry_classification),
+                        theme: JSON.parse(cached.theme_classification || '[]'),
                         weight: 50
                     });
                     return;
@@ -256,11 +256,11 @@ export const watchlistLogic = {
             const cached = options.forceRefresh
                 ? undefined
                 : getCachedClassificationRow(db, s.stock_code, s.exchange);
-            if (cached && cached.industryJson) {
+            if (cached && cached.industry_classification) {
                 try {
                     results[i] = watchlistLogic._normalizeCachedClassification({
-                        industry: JSON.parse(cached.industryJson),
-                        theme: JSON.parse(cached.themeJson || '[]'),
+                        industry: JSON.parse(cached.industry_classification),
+                        theme: JSON.parse(cached.theme_classification || '[]'),
                         weight: 50
                     });
                 }
@@ -315,8 +315,8 @@ export const watchlistLogic = {
         return results;
     },
     _getKnownCategories(db) {
-        const industries = db.prepare("SELECT name FROM watchlist_categories WHERE type = 'industry'").all();
-        const themes = db.prepare("SELECT name FROM watchlist_categories WHERE type = 'theme'").all();
+        const industries = db.prepare("SELECT name FROM industry_theme_categories WHERE type = 'industry'").all();
+        const themes = db.prepare("SELECT name FROM industry_theme_categories WHERE type = 'theme'").all();
         return {
             industries: industries.map(i => i.name),
             themes: themes.map(t => t.name)
@@ -355,11 +355,12 @@ export const watchlistLogic = {
                 }
             }
         };
-        const prepared = await prepareSimpleCompletionModelForAgent({
+        const completionModelParams = {
             cfg: embeddedCfg,
             agentId: MAIN_AGENT_ID,
             allowBundledStaticCatalogFallback: true
-        });
+        };
+        const prepared = await prepareSimpleCompletionModelForAgent(completionModelParams);
         if ("error" in prepared) {
             throw new Error(prepared.error);
         }
@@ -409,13 +410,13 @@ export const watchlistLogic = {
         }
     },
     _ensureCategory(db, name, type, userId) {
-        const existing = db.prepare("SELECT id FROM watchlist_categories WHERE userId = ? AND name = ? AND type = ?").get(userId, name, type);
+        const existing = db.prepare("SELECT id FROM industry_theme_categories WHERE userId = ? AND name = ? AND type = ?").get(userId, name, type);
         if (existing)
             return existing.id;
-        const maxOrderRow = db.prepare("SELECT MAX(sortOrder) as max FROM watchlist_categories WHERE userId = ?").get(userId);
+        const maxOrderRow = db.prepare("SELECT MAX(sortOrder) as max FROM industry_theme_categories WHERE userId = ?").get(userId);
         const nextOrder = (maxOrderRow?.max || 0) + 10;
         const id = randomUUID();
-        db.prepare(`INSERT INTO watchlist_categories (id, userId, name, type, sortOrder, weight) VALUES (?, ?, ?, ?, ?, 0)`).run(id, userId, name, type, nextOrder);
+        db.prepare(`INSERT INTO industry_theme_categories (id, userId, name, type, sortOrder, weight) VALUES (?, ?, ?, ?, ?, 0)`).run(id, userId, name, type, nextOrder);
         return id;
     },
     _buildSmartSortPrompt(stocks) {
