@@ -3,6 +3,7 @@ interface RuntimeTool {
     description: string;
     parameters: unknown;
     registerTool?: boolean;
+    agentToolTarget?: "main";
     execute(params: unknown, ctx: {
         userId: string;
     }): Promise<string>;

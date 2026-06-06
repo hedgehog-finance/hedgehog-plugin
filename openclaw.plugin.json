@@ -16,7 +16,7 @@
       "save_article_deep_reasoning_analysis",
       "get_stock_basic_info",
       "get_stock_note",
-      "update_skill_versions"
+      "update_hedgehog_skill_versions"
     ]
   },
   "setup": {

@@ -16,10 +16,11 @@ interface RuntimeTool {
 	description: string;
 	parameters: unknown;
 	registerTool?: boolean;
+	agentToolTarget?: "main";
 	execute(params: unknown, ctx: { userId: string }): Promise<string>;
 }
 
-const UPDATE_SKILL_VERSIONS_TOOL_NAME = "update_skill_versions";
+const UPDATE_SKILL_VERSIONS_TOOL_NAME = "update_hedgehog_skill_versions";
 const HEDGEHOG_INIT_SKILL_NAME = "hedgehog-init";
 
 let cachedPluginVersion: string | null = null;
@@ -141,33 +142,30 @@ function buildUpdateSkillVersionsMessage(params: BuildUpdateSkillVersionsMessage
 				"必须触发并使用 hedgehog-init skill 更新 hedgehog-workspace 的系统提示词到最新版本。",
 				`只有在 hedgehog-init skill 的系统提示词更新流程成功后，才可以调用 ${UPDATE_SKILL_VERSIONS_TOOL_NAME} 工具。`,
 				`成功后必须调用 ${UPDATE_SKILL_VERSIONS_TOOL_NAME} 工具更新本地数据库中的 skill 版本号，参数为 ${JSON.stringify(toolParams)}。`,
-				"如果系统提示词更新失败，禁止调用 update_skill_versions，必须直接说明失败原因。"
+				"如果系统提示词更新失败，禁止调用 update_hedgehog_skill_versions，必须直接说明失败原因。"
 			].join("\n"),
 			cw_context: JSON.stringify({
 				action: "update_hedgehog_init_system_prompt",
 				skills: updates
 			}),
 			cw_content: "Skill升级了，帮我更新`hedgehog-workspace`系统提示词到最新版本。",
-			cw_output: "系统提示词更新成功后，调用 update_skill_versions 工具写入版本，并返回简短结果。"
+			cw_output: "系统提示词更新成功后，调用 update_hedgehog_skill_versions 工具写入版本，并返回简短结果。"
 		});
 	}
 
 	return JSON.stringify({
 		cw_system_prompt: [
-			`必须调用 ${UPDATE_SKILL_VERSIONS_TOOL_NAME} 工具更新本地数据库中的 skill 版本号，参数为 ${JSON.stringify(toolParams)}。`,
-			"工具调用成功后，只需简要说明已更新的 skill 数量和名称，不要读取本地文件或扫描 workspace。"
+			"必须先更新 hedgehog-workspace 中的 hedgehog skills。",
+			`只有在 hedgehog skills 更新成功后，才可以调用 ${UPDATE_SKILL_VERSIONS_TOOL_NAME} 工具。`,
+			`更新成功后必须调用 ${UPDATE_SKILL_VERSIONS_TOOL_NAME} 工具更新本地数据库中的 skill 版本号，参数为 ${JSON.stringify(toolParams)}。`,
+			"如果 hedgehog skills 更新失败，禁止调用 update_hedgehog_skill_versions，必须直接说明失败原因。"
 		].join("\n"),
 		cw_context: JSON.stringify({
-			action: "update_skill_versions",
+			action: "update_hedgehog_skills",
 			skills: updates
 		}),
-		cw_content: [
-			"更新数据库中的 skill 版本号。",
-			"",
-			"待更新版本：",
-			JSON.stringify(toolParams, null, 2)
-		].join("\n"),
-		cw_output: "调用 update_skill_versions 工具完成数据库更新，并返回简短结果。"
+		cw_content: "帮我更新`hedgehog-workspace`的hedgehog skills",
+		cw_output: "hedgehog skills 更新成功后，调用 update_hedgehog_skill_versions 工具写入版本，并返回简短结果。"
 	});
 }
 
@@ -198,11 +196,12 @@ export const pluginInfoTools: Record<string, RuntimeTool> = {
 			});
 		}
 	},
-	update_skill_versions: {
-		name: "update_skill_versions",
+	update_hedgehog_skill_versions: {
+		name: "update_hedgehog_skill_versions",
 		description: "更新数据库中记录的 skill 版本号",
 		parameters: UpdateSkillVersionsParamsSchema,
-		registerTool: true,
+		registerTool: false,
+		agentToolTarget: "main",
 		async execute(params: unknown) {
 			const parsed = UpdateSkillVersionsParamsSchema.parse(params);
 			return JSON.stringify({
