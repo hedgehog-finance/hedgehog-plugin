@@ -46,12 +46,16 @@ function buildDailyMorningBriefingId(market: string, briefingDate: string): stri
 	return `daily_morning_briefing_${market}_${briefingDate}`;
 }
 
+function buildDailyMorningBriefingSessionId(market: string, briefingDate: string): string {
+	return `daily_morning_briefing_${market}_${briefingDate}_${Date.now()}`;
+}
+
 function selectDailyMorningBriefing(
 	db: ReturnType<typeof getDB>,
 	id: string
 ): DailyMorningBriefing {
 	const row = db.prepare(`
-		SELECT id, market, briefingDate, content, status, watchlistSnapshot, createdAt, updatedAt
+		SELECT id, market, briefingDate, content, status, sessionId, watchlistSnapshot, createdAt, updatedAt
 		FROM daily_morning_briefings
 		WHERE id = ?
 	`).get(id) as (Omit<DailyMorningBriefing, "watchlistSnapshot"> & { watchlistSnapshot: string }) | undefined;
@@ -64,6 +68,7 @@ function selectDailyMorningBriefing(
 		briefingDate: row.briefingDate,
 		content: row.content,
 		status: row.status,
+		sessionId: row.sessionId,
 		watchlistSnapshot: JSON.parse(row.watchlistSnapshot || "[]"),
 		createdAt: row.createdAt,
 		updatedAt: row.updatedAt
@@ -114,6 +119,7 @@ function mapDailyMorningBriefingRow(row: Omit<DailyMorningBriefing, "watchlistSn
 		briefingDate: row.briefingDate,
 		content: row.content,
 		status: row.status,
+		sessionId: row.sessionId,
 		watchlistSnapshot: JSON.parse(row.watchlistSnapshot || "[]"),
 		createdAt: row.createdAt,
 		updatedAt: row.updatedAt
@@ -165,6 +171,12 @@ export const dailyMorningBriefingTools: Record<string, RuntimeTool> = {
 			const market = DAILY_MORNING_BRIEFING_MARKET;
 			const briefingDate = getLocalDateString();
 			const id = args.id || buildDailyMorningBriefingId(market, briefingDate);
+			const existing = db.prepare(`
+				SELECT sessionId
+				FROM daily_morning_briefings
+				WHERE id = ?
+			`).get(id) as { sessionId: string } | undefined;
+			const sessionId = existing?.sessionId || buildDailyMorningBriefingSessionId(market, briefingDate);
 			if (args.status === "generating") {
 				const generating = selectGeneratingDailyMorningBriefing(db, market, briefingDate);
 				if (generating) {
@@ -185,9 +197,9 @@ export const dailyMorningBriefingTools: Record<string, RuntimeTool> = {
 			`).run(content, args.status, watchlistSnapshot, id);
 			if (result.changes === 0) {
 				db.prepare(`
-					INSERT INTO daily_morning_briefings (id, market, briefingDate, content, status, watchlistSnapshot)
-					VALUES (?, ?, ?, ?, ?, ?)
-				`).run(id, market, briefingDate, content, args.status, watchlistSnapshot);
+					INSERT INTO daily_morning_briefings (id, market, briefingDate, content, status, sessionId, watchlistSnapshot)
+					VALUES (?, ?, ?, ?, ?, ?, ?)
+				`).run(id, market, briefingDate, content, args.status, sessionId, watchlistSnapshot);
 			}
 
 			const data = selectDailyMorningBriefing(db, id);
@@ -211,7 +223,7 @@ export const dailyMorningBriefingTools: Record<string, RuntimeTool> = {
 				WHERE market = ?
 			`).get(market) as { total: number }).total || 0;
 			const rows = db.prepare(`
-				SELECT id, market, briefingDate, status, createdAt, updatedAt
+				SELECT id, market, briefingDate, status, sessionId, createdAt, updatedAt
 				FROM daily_morning_briefings
 				WHERE market = ?
 				ORDER BY briefingDate DESC, updatedAt DESC

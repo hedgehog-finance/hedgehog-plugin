@@ -636,6 +636,7 @@ export const hedgehogFinancePlugin = {
                         try {
                             saveStockAiAnalysisRecord(getDB(), accountId, {
                                 ...stockAnalysisRequest,
+                                sessionId: appPayload.sessionId || appPayload.params?.sessionId || "",
                                 content: visibleContent
                             });
                             didSaveStockAnalysis = true;

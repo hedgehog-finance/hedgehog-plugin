@@ -276,6 +276,7 @@ function runDailyMorningBriefingMigrations(db: DatabaseSync) {
 
 	const snapshotColumn = tableColumnNames.has("watchlistSnapshot") ? "watchlistSnapshot" : "watchlistSnapshotJson";
 	const statusColumn = tableColumnNames.has("status") ? "status" : "'completed'";
+	const sessionIdColumn = tableColumnNames.has("sessionId") ? "sessionId" : "''";
 	db.exec("BEGIN");
 	try {
 		db.exec(`
@@ -287,13 +288,14 @@ function runDailyMorningBriefingMigrations(db: DatabaseSync) {
 				briefingDate           TEXT NOT NULL,
 				content                TEXT NOT NULL,
 				status                 TEXT NOT NULL DEFAULT 'completed',
+				sessionId              TEXT NOT NULL DEFAULT '',
 				watchlistSnapshot      TEXT NOT NULL DEFAULT '[]',
 				createdAt              DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
 				updatedAt              DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW'))
 			);
 
-			INSERT INTO daily_morning_briefings_history (id, market, briefingDate, content, status, watchlistSnapshot, createdAt, updatedAt)
-			SELECT id, market, briefingDate, content, ${statusColumn}, ${snapshotColumn}, createdAt, updatedAt
+			INSERT INTO daily_morning_briefings_history (id, market, briefingDate, content, status, sessionId, watchlistSnapshot, createdAt, updatedAt)
+			SELECT id, market, briefingDate, content, ${statusColumn}, ${sessionIdColumn}, ${snapshotColumn}, createdAt, updatedAt
 			FROM daily_morning_briefings;
 
 			DROP TABLE daily_morning_briefings;
@@ -319,9 +321,14 @@ function runDailyMorningBriefingSchemaMigrations(db: DatabaseSync) {
 	if (!columnNames.has("status")) {
 		db.prepare("ALTER TABLE daily_morning_briefings ADD COLUMN status TEXT NOT NULL DEFAULT 'completed'").run();
 	}
+	if (!columnNames.has("sessionId")) {
+		db.prepare("ALTER TABLE daily_morning_briefings ADD COLUMN sessionId TEXT NOT NULL DEFAULT ''").run();
+	}
 }
 
 function runStockAiAnalysisMigrations(db: DatabaseSync) {
+	const tableColumns = db.prepare("PRAGMA table_info(stock_ai_analysis)").all() as { name: string }[];
+	const tableColumnNames = new Set(tableColumns.map(column => column.name));
 	const indexes = db.prepare("PRAGMA index_list(stock_ai_analysis)").all() as { name: string; unique: number }[];
 	const hasUniqueStockIndex = indexes.some(index => {
 		if (index.unique !== 1) return false;
@@ -330,6 +337,7 @@ function runStockAiAnalysisMigrations(db: DatabaseSync) {
 		return columnNames.includes("userId") && columnNames.includes("stock_code");
 	});
 	if (!hasUniqueStockIndex) return;
+	const sessionIdColumn = tableColumnNames.has("sessionId") ? "sessionId" : "''";
 
 	db.exec("BEGIN");
 	try {
@@ -342,14 +350,15 @@ function runStockAiAnalysisMigrations(db: DatabaseSync) {
 				stock_code     TEXT NOT NULL,
 				stock_name     TEXT NOT NULL,
 				market        TEXT NOT NULL DEFAULT 'CN',
+				sessionId     TEXT NOT NULL DEFAULT '',
 				content       TEXT NOT NULL,
 				createdAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
 				updatedAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
 				PRIMARY KEY(id, userId)
 			);
 
-			INSERT INTO stock_ai_analysis_history (id, userId, stock_code, stock_name, market, content, createdAt, updatedAt)
-			SELECT id, userId, stock_code, stock_name, market, content, createdAt, updatedAt
+			INSERT INTO stock_ai_analysis_history (id, userId, stock_code, stock_name, market, sessionId, content, createdAt, updatedAt)
+			SELECT id, userId, stock_code, stock_name, market, ${sessionIdColumn}, content, createdAt, updatedAt
 			FROM stock_ai_analysis;
 
 			DROP TABLE stock_ai_analysis;
@@ -368,6 +377,9 @@ function runStockAiAnalysisSchemaMigrations(db: DatabaseSync) {
 	if (columns.length > 0 && !columns.some(column => column.name === "status")) {
 		db.prepare("ALTER TABLE stock_ai_analysis ADD COLUMN status TEXT NOT NULL DEFAULT 'completed'").run();
 	}
+	if (columns.length > 0 && !columns.some(column => column.name === "sessionId")) {
+		db.prepare("ALTER TABLE stock_ai_analysis ADD COLUMN sessionId TEXT NOT NULL DEFAULT ''").run();
+	}
 }
 
 function runArticleAiAnalysisMigrations(db: DatabaseSync) {
@@ -375,6 +387,8 @@ function runArticleAiAnalysisMigrations(db: DatabaseSync) {
 	if (columns.length === 0 || columns.some(column => column.name === "sourceId")) {
 		return;
 	}
+	const columnNames = new Set(columns.map(column => column.name));
+	const sessionIdExpr = columnNames.has("sessionId") ? "sessionId" : "''";
 
 	db.exec("BEGIN");
 	try {
@@ -387,6 +401,7 @@ function runArticleAiAnalysisMigrations(db: DatabaseSync) {
 				userId        TEXT NOT NULL,
 				analysisType  TEXT NOT NULL,
 				market        TEXT NOT NULL DEFAULT 'CN',
+				sessionId     TEXT NOT NULL DEFAULT '',
 				content       TEXT NOT NULL,
 				createdAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
 				updatedAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
@@ -394,8 +409,8 @@ function runArticleAiAnalysisMigrations(db: DatabaseSync) {
 				UNIQUE(sourceId, userId, analysisType, market)
 			);
 
-			INSERT INTO article_ai_analysis_v2 (id, sourceId, userId, analysisType, market, content, createdAt, updatedAt)
-			SELECT lower(hex(randomblob(16))), id, userId, analysisType, market, content, createdAt, updatedAt
+			INSERT INTO article_ai_analysis_v2 (id, sourceId, userId, analysisType, market, sessionId, content, createdAt, updatedAt)
+			SELECT lower(hex(randomblob(16))), id, userId, analysisType, market, ${sessionIdExpr}, content, createdAt, updatedAt
 			FROM article_ai_analysis;
 
 			DROP TABLE article_ai_analysis;
@@ -415,17 +430,19 @@ function runNewsAnalysisMigrations(db: DatabaseSync) {
 	if (columns.length === 0 || !columns.some(column => column.name === "sourceId")) {
 		return;
 	}
+	const columnNames = new Set(columns.map(column => column.name));
+	const sessionIdExpr = columnNames.has("sessionId") ? "sessionId" : "''";
 
 	db.exec("BEGIN");
 	try {
 		db.exec(`
-			INSERT OR REPLACE INTO news_fact_check_analysis (id, sourceId, sourceTitle, userId, status, content, createdAt, updatedAt)
-			SELECT id, sourceId, '', userId, 'completed', content, createdAt, updatedAt
+			INSERT OR REPLACE INTO news_fact_check_analysis (id, sourceId, sourceTitle, userId, sessionId, status, content, createdAt, updatedAt)
+			SELECT id, sourceId, '', userId, ${sessionIdExpr}, 'completed', content, createdAt, updatedAt
 			FROM article_ai_analysis
 			WHERE analysisType = 'verification';
 
-			INSERT OR REPLACE INTO news_deep_reasoning_analysis (id, sourceId, sourceTitle, userId, market, status, content, createdAt, updatedAt)
-			SELECT id, sourceId, '', userId, market, 'completed', content, createdAt, updatedAt
+			INSERT OR REPLACE INTO news_deep_reasoning_analysis (id, sourceId, sourceTitle, userId, market, sessionId, status, content, createdAt, updatedAt)
+			SELECT id, sourceId, '', userId, market, ${sessionIdExpr}, 'completed', content, createdAt, updatedAt
 			FROM article_ai_analysis
 			WHERE analysisType = 'deduction';
 
@@ -449,6 +466,7 @@ function runNewsFactCheckAnalysisSchemaMigrations(db: DatabaseSync) {
 
 	const sourceTitleExpr = columnNames.has("sourceTitle") ? "sourceTitle" : "''";
 	const statusExpr = columnNames.has("status") ? "status" : "'completed'";
+	const sessionIdExpr = columnNames.has("sessionId") ? "sessionId" : "''";
 
 	db.exec("BEGIN");
 	try {
@@ -460,6 +478,7 @@ function runNewsFactCheckAnalysisSchemaMigrations(db: DatabaseSync) {
 				sourceId      TEXT NOT NULL,
 				sourceTitle   TEXT NOT NULL DEFAULT '',
 				userId        TEXT NOT NULL,
+				sessionId     TEXT NOT NULL DEFAULT '',
 				status        TEXT NOT NULL DEFAULT 'completed',
 				content       TEXT NOT NULL,
 				createdAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
@@ -468,8 +487,8 @@ function runNewsFactCheckAnalysisSchemaMigrations(db: DatabaseSync) {
 				UNIQUE(sourceId, userId)
 			);
 
-			INSERT OR REPLACE INTO news_fact_check_analysis_v2 (id, sourceId, sourceTitle, userId, status, content, createdAt, updatedAt)
-			SELECT id, sourceId, ${sourceTitleExpr}, userId, ${statusExpr}, content, createdAt, updatedAt
+			INSERT OR REPLACE INTO news_fact_check_analysis_v2 (id, sourceId, sourceTitle, userId, sessionId, status, content, createdAt, updatedAt)
+			SELECT id, sourceId, ${sourceTitleExpr}, userId, ${sessionIdExpr}, ${statusExpr}, content, createdAt, updatedAt
 			FROM news_fact_check_analysis;
 
 			DROP TABLE news_fact_check_analysis;
@@ -493,6 +512,7 @@ function runNewsDeepReasoningAnalysisSchemaMigrations(db: DatabaseSync) {
 	const sourceTitleExpr = columnNames.has("sourceTitle") ? "sourceTitle" : "''";
 	const marketExpr = columnNames.has("market") ? "market" : "'CN'";
 	const statusExpr = columnNames.has("status") ? "status" : "'completed'";
+	const sessionIdExpr = columnNames.has("sessionId") ? "sessionId" : "''";
 
 	db.exec("BEGIN");
 	try {
@@ -505,6 +525,7 @@ function runNewsDeepReasoningAnalysisSchemaMigrations(db: DatabaseSync) {
 				sourceTitle   TEXT NOT NULL DEFAULT '',
 				userId        TEXT NOT NULL,
 				market        TEXT NOT NULL DEFAULT 'CN',
+				sessionId     TEXT NOT NULL DEFAULT '',
 				status        TEXT NOT NULL DEFAULT 'completed',
 				content       TEXT NOT NULL,
 				createdAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
@@ -513,8 +534,8 @@ function runNewsDeepReasoningAnalysisSchemaMigrations(db: DatabaseSync) {
 				UNIQUE(sourceId, userId, market)
 			);
 
-			INSERT OR REPLACE INTO news_deep_reasoning_analysis_v2 (id, sourceId, sourceTitle, userId, market, status, content, createdAt, updatedAt)
-			SELECT id, sourceId, ${sourceTitleExpr}, userId, ${marketExpr}, ${statusExpr}, content, createdAt, updatedAt
+			INSERT OR REPLACE INTO news_deep_reasoning_analysis_v2 (id, sourceId, sourceTitle, userId, market, sessionId, status, content, createdAt, updatedAt)
+			SELECT id, sourceId, ${sourceTitleExpr}, userId, ${marketExpr}, ${sessionIdExpr}, ${statusExpr}, content, createdAt, updatedAt
 			FROM news_deep_reasoning_analysis;
 
 			DROP TABLE news_deep_reasoning_analysis;
@@ -541,6 +562,15 @@ function runNewsDeepReasoningDropSourceContentMigration(db: DatabaseSync) {
 	if (columns.length === 0) return;
 	if (!columns.some(column => column.name === "sourceContent")) return;
 	db.prepare("ALTER TABLE news_deep_reasoning_analysis DROP COLUMN sourceContent").run();
+}
+
+function runNewsAnalysisSessionIdMigrations(db: DatabaseSync) {
+	for (const table of ["news_fact_check_analysis", "news_deep_reasoning_analysis"]) {
+		const columns = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+		if (columns.length > 0 && !columns.some(column => column.name === "sessionId")) {
+			db.prepare(`ALTER TABLE ${table} ADD COLUMN sessionId TEXT NOT NULL DEFAULT ''`).run();
+		}
+	}
 }
 
 function runProfileLibrariesSchemaMigrations(db: DatabaseSync) {
@@ -709,6 +739,7 @@ export function getDB(): DatabaseSync {
 			stock_code     TEXT NOT NULL,
 			stock_name     TEXT NOT NULL,
 			market        TEXT NOT NULL DEFAULT 'CN',
+			sessionId     TEXT NOT NULL DEFAULT '',
 			status        TEXT NOT NULL DEFAULT 'completed',
 			content       TEXT NOT NULL,
 			createdAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
@@ -722,6 +753,7 @@ export function getDB(): DatabaseSync {
 			sourceId      TEXT NOT NULL,
 			sourceTitle   TEXT NOT NULL DEFAULT '',
 			userId        TEXT NOT NULL,
+			sessionId     TEXT NOT NULL DEFAULT '',
 			status        TEXT NOT NULL DEFAULT 'completed',
 			content       TEXT NOT NULL,
 			createdAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
@@ -738,6 +770,7 @@ export function getDB(): DatabaseSync {
 			sourceTitle   TEXT NOT NULL DEFAULT '',
 			userId        TEXT NOT NULL,
 			market        TEXT NOT NULL DEFAULT 'CN',
+			sessionId     TEXT NOT NULL DEFAULT '',
 			status        TEXT NOT NULL DEFAULT 'completed',
 			content       TEXT NOT NULL,
 			createdAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
@@ -754,6 +787,7 @@ export function getDB(): DatabaseSync {
 			briefingDate           TEXT NOT NULL,
 			content                TEXT NOT NULL,
 			status                 TEXT NOT NULL DEFAULT 'completed',
+			sessionId              TEXT NOT NULL DEFAULT '',
 			watchlistSnapshot      TEXT NOT NULL DEFAULT '[]',
 			createdAt              DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
 			updatedAt              DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW'))
@@ -780,6 +814,7 @@ export function getDB(): DatabaseSync {
 		runNewsFactCheckAnalysisSchemaMigrations(_db);
 		runNewsDeepReasoningAnalysisSchemaMigrations(_db);
 		runNewsAnalysisMigrations(_db);
+		runNewsAnalysisSessionIdMigrations(_db);
 		runDailyMorningBriefingMigrations(_db);
 		runDailyMorningBriefingSchemaMigrations(_db);
 		runNewsFactCheckDropSourceContentMigration(_db);

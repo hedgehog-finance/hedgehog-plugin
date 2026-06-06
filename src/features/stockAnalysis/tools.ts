@@ -6,16 +6,16 @@ import {
 	BuildStockAiAnalysisMessageParams,
 	BuildStockAiAnalysisMessageParamsSchema,
 	GetArticleAiAnalysisParamsSchema,
+	GetStockAiAnalysisDetailBySessionParamsSchema,
 	GetStockAiAnalysisDetailParamsSchema,
 	GetStockAiAnalysisParamsSchema,
 	QueryArticleAiAnalysisHistoryParamsSchema,
 	QueryStockAiAnalysisStocksParamsSchema,
-	SaveArticleDeepReasoningParamsSchema,
 	QueryStockAiAnalysisHistoryParamsSchema,
-	SaveArticleAiAnalysisParamsSchema,
 	SaveStockAiAnalysisParamsSchema,
 	StockAiAnalysis,
-	StockAiAnalysisStockSummary
+	StockAiAnalysisStockSummary,
+	StockAiAnalysisWithoutContent
 } from "./schema.js";
 
 interface RuntimeTool {
@@ -36,7 +36,8 @@ const BuildStockAiAnalysisMessageAgentToolSchema = {
 	properties: {
 		stock_code: { type: "string", description: "股票代码" },
 		stock_name: { type: "string", description: "股票名称" },
-		market: { type: "string", description: "市场类型，默认 CN" }
+		market: { type: "string", description: "市场类型，默认 CN" },
+		sessionId: { type: "string", description: "前端生成的会话 ID" }
 	}
 };
 
@@ -60,10 +61,12 @@ function buildStockAiAnalysisContent(args: BuildStockAiAnalysisMessageParams): s
 
 function buildStockAiAnalysisMessage(args: BuildStockAiAnalysisMessageParams): string {
 	const stock_code = normalizeStockCode(args.stock_code);
+	const sessionId = args.sessionId || "";
 	const buildGeneratingSaveParams = () => JSON.stringify({
 		stock_code,
 		stock_name: args.stock_name,
 		market: args.market,
+		sessionId,
 		status: "generating",
 		content: ""
 	});
@@ -71,6 +74,7 @@ function buildStockAiAnalysisMessage(args: BuildStockAiAnalysisMessageParams): s
 		stock_code,
 		stock_name: args.stock_name,
 		market: args.market,
+		sessionId,
 		status,
 		content: "..."
 	});
@@ -86,6 +90,7 @@ function buildStockAiAnalysisMessage(args: BuildStockAiAnalysisMessageParams): s
 			stock_code,
 			stock_name: args.stock_name,
 			market: args.market,
+			sessionId,
 			saveMode: "tool"
 		}),
 		cw_market: args.market,
@@ -105,7 +110,7 @@ function selectLatestStockAnalysis(
 	market: string
 ): StockAiAnalysis | undefined {
 	return db.prepare(`
-		SELECT id, stock_code, stock_name, market, status, content, createdAt, updatedAt
+		SELECT id, stock_code, stock_name, market, sessionId, status, content, createdAt, updatedAt
 		FROM stock_ai_analysis
 		WHERE stock_code = ? AND market = ?
 		ORDER BY updatedAt DESC, createdAt DESC
@@ -120,7 +125,7 @@ function selectLatestGeneratingStockAnalysis(
 	market: string
 ): StockAiAnalysis | undefined {
 	return db.prepare(`
-		SELECT id, stock_code, stock_name, market, status, content, createdAt, updatedAt
+		SELECT id, stock_code, stock_name, market, sessionId, status, content, createdAt, updatedAt
 		FROM stock_ai_analysis
 		WHERE userId = ? AND stock_code = ? AND market = ? AND status = 'generating'
 		ORDER BY updatedAt DESC, createdAt DESC
@@ -133,12 +138,27 @@ function selectStockAnalysisDetail(
 	id: string
 ): StockAiAnalysis | undefined {
 	return db.prepare(`
-		SELECT id, stock_code, stock_name, market, status, content, createdAt, updatedAt
+		SELECT id, stock_code, stock_name, market, sessionId, status, content, createdAt, updatedAt
 		FROM stock_ai_analysis
 		WHERE id = ?
 		ORDER BY updatedAt DESC, createdAt DESC
 		LIMIT 1
 	`).get(id) as StockAiAnalysis | undefined;
+}
+
+function selectStockAnalysisDetailBySession(
+	db: ReturnType<typeof getDB>,
+	userId: string,
+	sessionId: string,
+	stock_code: string
+): StockAiAnalysisWithoutContent | undefined {
+	return db.prepare(`
+		SELECT id, stock_code, stock_name, market, sessionId, status, createdAt, updatedAt
+		FROM stock_ai_analysis
+		WHERE userId = ? AND sessionId = ? AND stock_code = ?
+		ORDER BY updatedAt DESC, createdAt DESC
+		LIMIT 1
+	`).get(userId, sessionId, stock_code) as StockAiAnalysisWithoutContent | undefined;
 }
 
 function queryStockAnalysisStocks(
@@ -197,6 +217,7 @@ export function saveStockAiAnalysisRecord(
 		stock_code: string;
 		stock_name?: string;
 		market: string;
+		sessionId?: string;
 		content: string;
 		status?: string;
 	}
@@ -204,6 +225,7 @@ export function saveStockAiAnalysisRecord(
 	const stock_code = normalizeStockCode(args.stock_code);
 	const status = args.status || "completed";
 	const stock_name = args.stock_name?.trim() || stock_code;
+	const sessionId = args.sessionId?.trim() || "";
 	const content = status === "completed" ? ensureChartPlaceholdersInBody(args.content) : args.content.trim();
 	const id = randomUUID();
 
@@ -222,12 +244,12 @@ export function saveStockAiAnalysisRecord(
 	}
 
 	db.prepare(`
-		INSERT INTO stock_ai_analysis (id, userId, stock_code, stock_name, market, status, content)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`).run(id, userId, stock_code, stock_name, args.market, status, content);
+		INSERT INTO stock_ai_analysis (id, userId, stock_code, stock_name, market, sessionId, status, content)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`).run(id, userId, stock_code, stock_name, args.market, sessionId, status, content);
 
 	return db.prepare(`
-		SELECT id, stock_code, stock_name, market, status, content, createdAt, updatedAt
+		SELECT id, stock_code, stock_name, market, sessionId, status, content, createdAt, updatedAt
 		FROM stock_ai_analysis
 		WHERE userId = ? AND id = ?
 	`).get(userId, id) as StockAiAnalysis;
@@ -247,7 +269,7 @@ function selectLatestArticleAnalysis(
 	const table = tableForArticleAnalysis(analysisType);
 	if (analysisType === "deduction") {
 		return db.prepare(`
-			SELECT id, sourceId, ? AS analysisType, sourceTitle, market, status, content, createdAt, updatedAt
+			SELECT id, sourceId, ? AS analysisType, sourceTitle, market, sessionId, status, content, createdAt, updatedAt
 			FROM ${table}
 			WHERE userId = ? AND sourceId = ? AND market = ?
 			ORDER BY updatedAt DESC, createdAt DESC
@@ -255,96 +277,12 @@ function selectLatestArticleAnalysis(
 		`).get(analysisType, userId, sourceId, market) as ArticleAiAnalysis | undefined;
 	}
 	return db.prepare(`
-		SELECT id, sourceId, ? AS analysisType, sourceTitle, status, content, createdAt, updatedAt
+		SELECT id, sourceId, ? AS analysisType, sourceTitle, sessionId, status, content, createdAt, updatedAt
 		FROM ${table}
 		WHERE userId = ? AND sourceId = ?
 		ORDER BY updatedAt DESC, createdAt DESC
 		LIMIT 1
 	`).get(analysisType, userId, sourceId) as ArticleAiAnalysis | undefined;
-}
-
-function selectLatestGeneratingArticleAnalysis(
-	db: ReturnType<typeof getDB>,
-	userId: string,
-	sourceId: string,
-	analysisType: ArticleAiAnalysis["analysisType"]
-): ArticleAiAnalysis | undefined {
-	const table = tableForArticleAnalysis(analysisType);
-	if (analysisType === "deduction") {
-		return db.prepare(`
-			SELECT id, sourceId, ? AS analysisType, sourceTitle, market, status, content, createdAt, updatedAt
-			FROM ${table}
-			WHERE userId = ? AND sourceId = ? AND status = 'generating'
-			ORDER BY updatedAt DESC, createdAt DESC
-			LIMIT 1
-		`).get(analysisType, userId, sourceId) as ArticleAiAnalysis | undefined;
-	}
-	return db.prepare(`
-		SELECT id, sourceId, ? AS analysisType, sourceTitle, status, content, createdAt, updatedAt
-		FROM ${table}
-		WHERE userId = ? AND sourceId = ? AND status = 'generating'
-		ORDER BY updatedAt DESC, createdAt DESC
-		LIMIT 1
-	`).get(analysisType, userId, sourceId) as ArticleAiAnalysis | undefined;
-}
-
-function saveArticleAiAnalysisRecord(
-	db: ReturnType<typeof getDB>,
-	userId: string,
-	args: {
-		sourceId: string;
-		sourceTitle: string;
-		content: string;
-		status: string;
-	}
-): ArticleAiAnalysis {
-	const id = randomUUID();
-
-	db.prepare(`
-		INSERT INTO news_fact_check_analysis (id, sourceId, sourceTitle, userId, status, content)
-		VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT(sourceId, userId) DO UPDATE SET
-			sourceTitle = CASE WHEN excluded.sourceTitle != '' THEN excluded.sourceTitle ELSE news_fact_check_analysis.sourceTitle END,
-			status = excluded.status,
-			content = excluded.content,
-			updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
-	`).run(id, args.sourceId, args.sourceTitle, userId, args.status, args.content);
-
-	return db.prepare(`
-		SELECT id, sourceId, 'verification' AS analysisType, sourceTitle, status, content, createdAt, updatedAt
-		FROM news_fact_check_analysis
-		WHERE userId = ? AND sourceId = ?
-	`).get(userId, args.sourceId) as ArticleAiAnalysis;
-}
-
-function saveArticleDeepReasoningRecord(
-	db: ReturnType<typeof getDB>,
-	userId: string,
-	args: {
-		sourceId: string;
-		sourceTitle: string;
-		market: string;
-		content: string;
-		status: string;
-	}
-): ArticleAiAnalysis {
-	const id = randomUUID();
-
-	db.prepare(`
-		INSERT INTO news_deep_reasoning_analysis (id, sourceId, sourceTitle, userId, market, status, content)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(sourceId, userId, market) DO UPDATE SET
-			sourceTitle = CASE WHEN excluded.sourceTitle != '' THEN excluded.sourceTitle ELSE news_deep_reasoning_analysis.sourceTitle END,
-			status = excluded.status,
-			content = excluded.content,
-			updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
-	`).run(id, args.sourceId, args.sourceTitle, userId, args.market, args.status, args.content);
-
-	return db.prepare(`
-		SELECT id, sourceId, 'deduction' AS analysisType, sourceTitle, market, status, content, createdAt, updatedAt
-		FROM news_deep_reasoning_analysis
-		WHERE userId = ? AND sourceId = ? AND market = ?
-	`).get(userId, args.sourceId, args.market) as ArticleAiAnalysis;
 }
 
 export const stockAnalysisTools: Record<string, RuntimeTool> = {
@@ -376,7 +314,7 @@ export const stockAnalysisTools: Record<string, RuntimeTool> = {
 				queryParams.push(normalizeStockCode(args.stock_code));
 			}
 			const rows = db.prepare(`
-				SELECT id, stock_code, stock_name, market, status, createdAt, updatedAt
+				SELECT id, stock_code, stock_name, market, sessionId, status, createdAt, updatedAt
 				FROM stock_ai_analysis
 				WHERE ${conditions.join(" AND ")}
 				ORDER BY updatedAt DESC, createdAt DESC
@@ -434,6 +372,23 @@ export const stockAnalysisTools: Record<string, RuntimeTool> = {
 			return JSON.stringify({ success: true, data: data || null });
 		}
 	},
+	get_stock_ai_analysis_detail_by_session: {
+		name: "get_stock_ai_analysis_detail_by_session",
+		description: "根据 sessionId 和股票代码查询个股 AI 分析详情元数据；不返回 content 正文。",
+		parameters: GetStockAiAnalysisDetailBySessionParamsSchema,
+		registerTool: false,
+		async execute(params, ctx) {
+			const args = GetStockAiAnalysisDetailBySessionParamsSchema.parse(params);
+			const db = getDB();
+			const data = selectStockAnalysisDetailBySession(
+				db,
+				resolveToolUserId(ctx),
+				args.sessionId,
+				normalizeStockCode(args.stock_code)
+			);
+			return JSON.stringify({ success: true, data: data || null });
+		}
+	},
 	build_stock_ai_analysis_message: {
 		name: "build_stock_ai_analysis_message",
 		label: "构建个股分析消息",
@@ -455,16 +410,18 @@ export const stockAnalysisTools: Record<string, RuntimeTool> = {
 				});
 			}
 			const message = buildStockAiAnalysisMessage({ ...args, stock_code });
+			const payload = JSON.parse(message);
 			return JSON.stringify({
 				success: true,
 				data: {
 					message,
-					payload: JSON.parse(message),
+					payload,
 					stock_code,
 					saveParams: {
 						stock_code,
 						stock_name: args.stock_name,
-						market: args.market
+						market: args.market,
+						sessionId: args.sessionId || ""
 					},
 					skill: STOCK_AI_ANALYSIS_SKILL
 				}
@@ -473,11 +430,8 @@ export const stockAnalysisTools: Record<string, RuntimeTool> = {
 	},
 	save_stock_ai_analysis: {
 		name: "save_stock_ai_analysis",
-		description: [
+		description:
 			"保存个股 AI 分析结果。生成前必须先以 status=generating、content=\"\" 调用，并传入 stock_code、stock_name、market；生成成功后以 status=completed 保存完整正文 content；生成失败后以 status=failed 保存完整错误信息。",
-			"个股分析的 cw_output 需要包含图表相关要求：",
-			CHART_OUTPUT_GUIDANCE
-		].join("\n"),
 		parameters: SaveStockAiAnalysisParamsSchema,
 		registerTool: true,
 		async execute(params, ctx) {
@@ -523,7 +477,7 @@ export const stockAnalysisTools: Record<string, RuntimeTool> = {
 				? [args.analysisType, userId, args.market, args.pageSize, offset]
 				: [args.analysisType, userId, args.pageSize, offset];
 			const rows = db.prepare(`
-				SELECT id, sourceId, ? AS analysisType, sourceTitle, ${args.analysisType === "deduction" ? "market," : ""} status, createdAt, updatedAt
+					SELECT id, sourceId, ? AS analysisType, sourceTitle, ${args.analysisType === "deduction" ? "market," : ""} sessionId, status, createdAt, updatedAt
 				FROM ${table}
 				WHERE userId = ?${marketCondition}
 				ORDER BY updatedAt DESC, createdAt DESC
@@ -547,44 +501,6 @@ export const stockAnalysisTools: Record<string, RuntimeTool> = {
 					totalPages: Math.ceil(total / args.pageSize)
 				}
 			});
-		}
-	},
-	save_information_verification: {
-		name: "save_information_verification",
-		description: "保存新闻信息求证结果。生成前必须先以 status=generating、content=\"\" 调用，并传入 sourceId、sourceTitle；生成成功后以 status=completed 保存完整正文 content；生成失败后以 status=failed 保存完整错误信息。",
-		parameters: SaveArticleAiAnalysisParamsSchema,
-		registerTool: true,
-		async execute(params, ctx) {
-			const args = SaveArticleAiAnalysisParamsSchema.parse(params);
-			const db = getDB();
-			const userId = resolveToolUserId(ctx);
-			if (args.status === "generating") {
-				const generating = selectLatestGeneratingArticleAnalysis(db, userId, args.sourceId, "verification");
-				if (generating) {
-					return JSON.stringify({ success: true, skipped: true, reason: "already_generating", data: generating });
-				}
-			}
-			const data = saveArticleAiAnalysisRecord(db, userId, args);
-			return JSON.stringify({ success: true, data });
-		}
-	},
-	save_article_deep_reasoning_analysis: {
-		name: "save_article_deep_reasoning_analysis",
-		description: "保存新闻深度推演结果。生成前必须先以 status=generating、content=\"\" 调用，并传入 sourceId、sourceTitle、sourceContent、market；生成成功后以 status=completed 保存完整正文 content；生成失败后以 status=failed 保存完整错误信息。",
-		parameters: SaveArticleDeepReasoningParamsSchema,
-		registerTool: true,
-		async execute(params, ctx) {
-			const args = SaveArticleDeepReasoningParamsSchema.parse(params);
-			const db = getDB();
-			const userId = resolveToolUserId(ctx);
-			if (args.status === "generating") {
-				const generating = selectLatestGeneratingArticleAnalysis(db, userId, args.sourceId, "deduction");
-				if (generating) {
-					return JSON.stringify({ success: true, skipped: true, reason: "already_generating", data: generating });
-				}
-			}
-			const data = saveArticleDeepReasoningRecord(db, userId, args);
-			return JSON.stringify({ success: true, data });
 		}
 	}
 };

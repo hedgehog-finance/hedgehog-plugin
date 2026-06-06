@@ -1,9 +1,12 @@
 import { z } from "zod";
 
+export const DeepReasoningStatusSchema = z.enum(["generating", "completed", "failed"]);
+
 export const BuildDeepReasoningMessageParamsSchema = z.object({
 	newsId: z.string().trim().min(1).describe("新闻 ID，例如 news-5"),
 	sourceTitle: z.string().trim().min(1).describe("新闻标题"),
-	sourceContent: z.string().trim().min(1).describe("新闻正文")
+	sourceContent: z.string().trim().min(1).describe("新闻正文"),
+	sessionId: z.string().trim().optional().default("").describe("前端生成的会话 ID")
 });
 export type BuildDeepReasoningMessageParams = z.infer<typeof BuildDeepReasoningMessageParamsSchema>;
 
@@ -20,3 +23,29 @@ export const GetDeepReasoningDetailParamsSchema = z.object({
 	message: "id 或 sourceId 至少提供一个"
 });
 export type GetDeepReasoningDetailParams = z.infer<typeof GetDeepReasoningDetailParamsSchema>;
+
+export const GetDeepReasoningDetailBySessionParamsSchema = z.object({
+	sessionId: z.string().trim().min(1).describe("前端生成的会话 ID"),
+	sourceId: z.string().trim().min(1).describe("新闻来源 ID，例如 news-5")
+});
+export type GetDeepReasoningDetailBySessionParams = z.infer<typeof GetDeepReasoningDetailBySessionParamsSchema>;
+
+export const SaveDeepReasoningParamsSchema = z.object({
+	sourceId: z.string().trim().min(1).describe("新闻来源 ID，例如 news-5"),
+	sourceTitle: z.string().trim().optional().default("").describe("新闻标题；status=generating 时必须提供"),
+	market: z.string().trim().min(1).default("CN").describe("市场类型，默认 CN"),
+	sessionId: z.string().trim().optional().default("").describe("前端生成的会话 ID"),
+	content: z.string().default("").describe("AI 分析内容；status=generating 时为空，status=failed 时存入错误信息"),
+	status: DeepReasoningStatusSchema.default("completed").describe("保存状态：generating 生成中，completed 成功，failed 失败")
+}).strict().refine((value) => {
+	if (value.status === "completed") return value.content.trim().length > 0;
+	return true;
+}, {
+	message: "completed 状态必须提供 content"
+}).refine((value) => {
+	if (value.status !== "generating") return true;
+	return value.sourceTitle.trim().length > 0;
+}, {
+	message: "generating 状态必须提供 sourceTitle"
+});
+export type SaveDeepReasoningParams = z.infer<typeof SaveDeepReasoningParamsSchema>;

@@ -27,9 +27,12 @@ function getLocalDateString() {
 function buildDailyMorningBriefingId(market, briefingDate) {
     return `daily_morning_briefing_${market}_${briefingDate}`;
 }
+function buildDailyMorningBriefingSessionId(market, briefingDate) {
+    return `daily_morning_briefing_${market}_${briefingDate}_${Date.now()}`;
+}
 function selectDailyMorningBriefing(db, id) {
     const row = db.prepare(`
-		SELECT id, market, briefingDate, content, status, watchlistSnapshot, createdAt, updatedAt
+		SELECT id, market, briefingDate, content, status, sessionId, watchlistSnapshot, createdAt, updatedAt
 		FROM daily_morning_briefings
 		WHERE id = ?
 	`).get(id);
@@ -41,6 +44,7 @@ function selectDailyMorningBriefing(db, id) {
         briefingDate: row.briefingDate,
         content: row.content,
         status: row.status,
+        sessionId: row.sessionId,
         watchlistSnapshot: JSON.parse(row.watchlistSnapshot || "[]"),
         createdAt: row.createdAt,
         updatedAt: row.updatedAt
@@ -80,6 +84,7 @@ function mapDailyMorningBriefingRow(row) {
         briefingDate: row.briefingDate,
         content: row.content,
         status: row.status,
+        sessionId: row.sessionId,
         watchlistSnapshot: JSON.parse(row.watchlistSnapshot || "[]"),
         createdAt: row.createdAt,
         updatedAt: row.updatedAt
@@ -126,6 +131,12 @@ export const dailyMorningBriefingTools = {
             const market = DAILY_MORNING_BRIEFING_MARKET;
             const briefingDate = getLocalDateString();
             const id = args.id || buildDailyMorningBriefingId(market, briefingDate);
+            const existing = db.prepare(`
+				SELECT sessionId
+				FROM daily_morning_briefings
+				WHERE id = ?
+			`).get(id);
+            const sessionId = existing?.sessionId || buildDailyMorningBriefingSessionId(market, briefingDate);
             if (args.status === "generating") {
                 const generating = selectGeneratingDailyMorningBriefing(db, market, briefingDate);
                 if (generating) {
@@ -144,9 +155,9 @@ export const dailyMorningBriefingTools = {
 			`).run(content, args.status, watchlistSnapshot, id);
             if (result.changes === 0) {
                 db.prepare(`
-					INSERT INTO daily_morning_briefings (id, market, briefingDate, content, status, watchlistSnapshot)
-					VALUES (?, ?, ?, ?, ?, ?)
-				`).run(id, market, briefingDate, content, args.status, watchlistSnapshot);
+					INSERT INTO daily_morning_briefings (id, market, briefingDate, content, status, sessionId, watchlistSnapshot)
+					VALUES (?, ?, ?, ?, ?, ?, ?)
+				`).run(id, market, briefingDate, content, args.status, sessionId, watchlistSnapshot);
             }
             const data = selectDailyMorningBriefing(db, id);
             return JSON.stringify({ success: true, data });
@@ -169,7 +180,7 @@ export const dailyMorningBriefingTools = {
 				WHERE market = ?
 			`).get(market).total || 0;
             const rows = db.prepare(`
-				SELECT id, market, briefingDate, status, createdAt, updatedAt
+				SELECT id, market, briefingDate, status, sessionId, createdAt, updatedAt
 				FROM daily_morning_briefings
 				WHERE market = ?
 				ORDER BY briefingDate DESC, updatedAt DESC

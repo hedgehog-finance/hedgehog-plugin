@@ -5,7 +5,8 @@ export const AiAnalysisStatusSchema = z.enum(["generating", "completed", "failed
 export const BuildStockAiAnalysisMessageParamsSchema = z.object({
 	stock_code: z.string().trim().min(1).describe("股票代码"),
 	stock_name: z.string().trim().min(1).describe("股票名称"),
-	market: z.string().trim().min(1).default("CN").describe("市场类型，默认 CN")
+	market: z.string().trim().min(1).default("CN").describe("市场类型，默认 CN"),
+	sessionId: z.string().trim().optional().default("").describe("前端生成的会话 ID")
 });
 export type BuildStockAiAnalysisMessageParams = z.infer<typeof BuildStockAiAnalysisMessageParamsSchema>;
 
@@ -19,6 +20,12 @@ export const GetStockAiAnalysisDetailParamsSchema = z.object({
 	id: z.string().trim().min(1).describe("分析记录 ID")
 });
 export type GetStockAiAnalysisDetailParams = z.infer<typeof GetStockAiAnalysisDetailParamsSchema>;
+
+export const GetStockAiAnalysisDetailBySessionParamsSchema = z.object({
+	sessionId: z.string().trim().min(1).describe("前端生成的会话 ID"),
+	stock_code: z.string().trim().min(1).describe("股票代码")
+});
+export type GetStockAiAnalysisDetailBySessionParams = z.infer<typeof GetStockAiAnalysisDetailBySessionParamsSchema>;
 
 export const QueryStockAiAnalysisHistoryParamsSchema = z.object({
 	stock_code: z.string().trim().min(1).optional().describe("股票代码，不传则查询全部"),
@@ -39,6 +46,7 @@ export const SaveStockAiAnalysisParamsSchema = z.object({
 	stock_code: z.string().trim().min(1).describe("股票代码"),
 	stock_name: z.string().trim().optional().default("").describe("股票名称；status=generating 时必须提供"),
 	market: z.string().trim().min(1).default("CN").describe("市场类型，默认 CN"),
+	sessionId: z.string().trim().optional().default("").describe("前端生成的会话 ID"),
 	content: z.string().default("").describe("AI 分析内容；status=generating 时为空，status=failed 时存入错误信息"),
 	status: AiAnalysisStatusSchema.default("completed").describe("保存状态：generating 生成中，completed 成功，failed 失败")
 }).strict().refine((value) => {
@@ -59,11 +67,14 @@ export interface StockAiAnalysis {
 	stock_code: string;
 	stock_name: string;
 	market: string;
+	sessionId: string;
 	status: string;
 	content: string;
 	createdAt: string;
 	updatedAt: string;
 }
+
+export type StockAiAnalysisWithoutContent = Omit<StockAiAnalysis, "content">;
 
 export interface StockAiAnalysisStockSummary {
 	stock_code: string;
@@ -92,49 +103,13 @@ export const QueryArticleAiAnalysisHistoryParamsSchema = z.object({
 });
 export type QueryArticleAiAnalysisHistoryParams = z.infer<typeof QueryArticleAiAnalysisHistoryParamsSchema>;
 
-export const SaveArticleAiAnalysisParamsSchema = z.object({
-	sourceId: z.string().trim().min(1).describe("新闻来源 ID，例如 news-5"),
-	sourceTitle: z.string().trim().optional().default("").describe("新闻标题；status=generating 时必须提供"),
-	content: z.string().default("").describe("AI 分析内容；status=generating 时为空，status=failed 时存入错误信息"),
-	status: AiAnalysisStatusSchema.default("completed").describe("保存状态：generating 生成中，completed 成功，failed 失败")
-}).strict().refine((value) => {
-	if (value.status === "completed") return value.content.trim().length > 0;
-	return true;
-}, {
-	message: "completed 状态必须提供 content"
-}).refine((value) => {
-	if (value.status !== "generating") return true;
-	return value.sourceTitle.trim().length > 0;
-}, {
-	message: "generating 状态必须提供 sourceTitle"
-});
-export type SaveArticleAiAnalysisParams = z.infer<typeof SaveArticleAiAnalysisParamsSchema>;
-
-export const SaveArticleDeepReasoningParamsSchema = z.object({
-	sourceId: z.string().trim().min(1).describe("新闻来源 ID，例如 news-5"),
-	sourceTitle: z.string().trim().optional().default("").describe("新闻标题；status=generating 时必须提供"),
-	market: z.string().trim().min(1).default("CN").describe("市场类型，默认 CN"),
-	content: z.string().default("").describe("AI 分析内容；status=generating 时为空，status=failed 时存入错误信息"),
-	status: AiAnalysisStatusSchema.default("completed").describe("保存状态：generating 生成中，completed 成功，failed 失败")
-}).strict().refine((value) => {
-	if (value.status === "completed") return value.content.trim().length > 0;
-	return true;
-}, {
-	message: "completed 状态必须提供 content"
-}).refine((value) => {
-	if (value.status !== "generating") return true;
-	return value.sourceTitle.trim().length > 0;
-}, {
-	message: "generating 状态必须提供 sourceTitle"
-});
-export type SaveArticleDeepReasoningParams = z.infer<typeof SaveArticleDeepReasoningParamsSchema>;
-
 export interface ArticleAiAnalysis {
 	id: string;
 	sourceId: string;
 	analysisType: GetArticleAiAnalysisParams["analysisType"];
 	sourceTitle?: string;
 	market?: string;
+	sessionId: string;
 	status: string;
 	content: string;
 	createdAt: string;

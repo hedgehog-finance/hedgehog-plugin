@@ -4,14 +4,17 @@ export declare const BuildStockAiAnalysisMessageParamsSchema: z.ZodObject<{
     stock_code: z.ZodString;
     stock_name: z.ZodString;
     market: z.ZodDefault<z.ZodString>;
+    sessionId: z.ZodDefault<z.ZodOptional<z.ZodString>>;
 }, "strip", z.ZodTypeAny, {
     stock_code: string;
     stock_name: string;
     market: string;
+    sessionId: string;
 }, {
     stock_code: string;
     stock_name: string;
     market?: string | undefined;
+    sessionId?: string | undefined;
 }>;
 export type BuildStockAiAnalysisMessageParams = z.infer<typeof BuildStockAiAnalysisMessageParamsSchema>;
 export declare const GetStockAiAnalysisParamsSchema: z.ZodObject<{
@@ -33,6 +36,17 @@ export declare const GetStockAiAnalysisDetailParamsSchema: z.ZodObject<{
     id: string;
 }>;
 export type GetStockAiAnalysisDetailParams = z.infer<typeof GetStockAiAnalysisDetailParamsSchema>;
+export declare const GetStockAiAnalysisDetailBySessionParamsSchema: z.ZodObject<{
+    sessionId: z.ZodString;
+    stock_code: z.ZodString;
+}, "strip", z.ZodTypeAny, {
+    stock_code: string;
+    sessionId: string;
+}, {
+    stock_code: string;
+    sessionId: string;
+}>;
+export type GetStockAiAnalysisDetailBySessionParams = z.infer<typeof GetStockAiAnalysisDetailBySessionParamsSchema>;
 export declare const QueryStockAiAnalysisHistoryParamsSchema: z.ZodObject<{
     stock_code: z.ZodOptional<z.ZodString>;
     market: z.ZodDefault<z.ZodString>;
@@ -68,6 +82,7 @@ export declare const SaveStockAiAnalysisParamsSchema: z.ZodEffects<z.ZodEffects<
     stock_code: z.ZodString;
     stock_name: z.ZodDefault<z.ZodOptional<z.ZodString>>;
     market: z.ZodDefault<z.ZodString>;
+    sessionId: z.ZodDefault<z.ZodOptional<z.ZodString>>;
     content: z.ZodDefault<z.ZodString>;
     status: z.ZodDefault<z.ZodEnum<["generating", "completed", "failed"]>>;
 }, "strict", z.ZodTypeAny, {
@@ -75,36 +90,42 @@ export declare const SaveStockAiAnalysisParamsSchema: z.ZodEffects<z.ZodEffects<
     stock_name: string;
     market: string;
     status: "generating" | "completed" | "failed";
+    sessionId: string;
     content: string;
 }, {
     stock_code: string;
     stock_name?: string | undefined;
     market?: string | undefined;
     status?: "generating" | "completed" | "failed" | undefined;
+    sessionId?: string | undefined;
     content?: string | undefined;
 }>, {
     stock_code: string;
     stock_name: string;
     market: string;
     status: "generating" | "completed" | "failed";
+    sessionId: string;
     content: string;
 }, {
     stock_code: string;
     stock_name?: string | undefined;
     market?: string | undefined;
     status?: "generating" | "completed" | "failed" | undefined;
+    sessionId?: string | undefined;
     content?: string | undefined;
 }>, {
     stock_code: string;
     stock_name: string;
     market: string;
     status: "generating" | "completed" | "failed";
+    sessionId: string;
     content: string;
 }, {
     stock_code: string;
     stock_name?: string | undefined;
     market?: string | undefined;
     status?: "generating" | "completed" | "failed" | undefined;
+    sessionId?: string | undefined;
     content?: string | undefined;
 }>;
 export type SaveStockAiAnalysisParams = z.infer<typeof SaveStockAiAnalysisParamsSchema>;
@@ -113,11 +134,13 @@ export interface StockAiAnalysis {
     stock_code: string;
     stock_name: string;
     market: string;
+    sessionId: string;
     status: string;
     content: string;
     createdAt: string;
     updatedAt: string;
 }
+export type StockAiAnalysisWithoutContent = Omit<StockAiAnalysis, "content">;
 export interface StockAiAnalysisStockSummary {
     stock_code: string;
     stock_name: string;
@@ -160,93 +183,13 @@ export declare const QueryArticleAiAnalysisHistoryParamsSchema: z.ZodObject<{
     pageSize?: number | undefined;
 }>;
 export type QueryArticleAiAnalysisHistoryParams = z.infer<typeof QueryArticleAiAnalysisHistoryParamsSchema>;
-export declare const SaveArticleAiAnalysisParamsSchema: z.ZodEffects<z.ZodEffects<z.ZodObject<{
-    sourceId: z.ZodString;
-    sourceTitle: z.ZodDefault<z.ZodOptional<z.ZodString>>;
-    content: z.ZodDefault<z.ZodString>;
-    status: z.ZodDefault<z.ZodEnum<["generating", "completed", "failed"]>>;
-}, "strict", z.ZodTypeAny, {
-    status: "generating" | "completed" | "failed";
-    sourceId: string;
-    sourceTitle: string;
-    content: string;
-}, {
-    sourceId: string;
-    status?: "generating" | "completed" | "failed" | undefined;
-    sourceTitle?: string | undefined;
-    content?: string | undefined;
-}>, {
-    status: "generating" | "completed" | "failed";
-    sourceId: string;
-    sourceTitle: string;
-    content: string;
-}, {
-    sourceId: string;
-    status?: "generating" | "completed" | "failed" | undefined;
-    sourceTitle?: string | undefined;
-    content?: string | undefined;
-}>, {
-    status: "generating" | "completed" | "failed";
-    sourceId: string;
-    sourceTitle: string;
-    content: string;
-}, {
-    sourceId: string;
-    status?: "generating" | "completed" | "failed" | undefined;
-    sourceTitle?: string | undefined;
-    content?: string | undefined;
-}>;
-export type SaveArticleAiAnalysisParams = z.infer<typeof SaveArticleAiAnalysisParamsSchema>;
-export declare const SaveArticleDeepReasoningParamsSchema: z.ZodEffects<z.ZodEffects<z.ZodObject<{
-    sourceId: z.ZodString;
-    sourceTitle: z.ZodDefault<z.ZodOptional<z.ZodString>>;
-    market: z.ZodDefault<z.ZodString>;
-    content: z.ZodDefault<z.ZodString>;
-    status: z.ZodDefault<z.ZodEnum<["generating", "completed", "failed"]>>;
-}, "strict", z.ZodTypeAny, {
-    market: string;
-    status: "generating" | "completed" | "failed";
-    sourceId: string;
-    sourceTitle: string;
-    content: string;
-}, {
-    sourceId: string;
-    market?: string | undefined;
-    status?: "generating" | "completed" | "failed" | undefined;
-    sourceTitle?: string | undefined;
-    content?: string | undefined;
-}>, {
-    market: string;
-    status: "generating" | "completed" | "failed";
-    sourceId: string;
-    sourceTitle: string;
-    content: string;
-}, {
-    sourceId: string;
-    market?: string | undefined;
-    status?: "generating" | "completed" | "failed" | undefined;
-    sourceTitle?: string | undefined;
-    content?: string | undefined;
-}>, {
-    market: string;
-    status: "generating" | "completed" | "failed";
-    sourceId: string;
-    sourceTitle: string;
-    content: string;
-}, {
-    sourceId: string;
-    market?: string | undefined;
-    status?: "generating" | "completed" | "failed" | undefined;
-    sourceTitle?: string | undefined;
-    content?: string | undefined;
-}>;
-export type SaveArticleDeepReasoningParams = z.infer<typeof SaveArticleDeepReasoningParamsSchema>;
 export interface ArticleAiAnalysis {
     id: string;
     sourceId: string;
     analysisType: GetArticleAiAnalysisParams["analysisType"];
     sourceTitle?: string;
     market?: string;
+    sessionId: string;
     status: string;
     content: string;
     createdAt: string;

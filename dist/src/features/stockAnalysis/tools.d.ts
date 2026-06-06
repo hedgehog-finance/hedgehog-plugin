@@ -15,6 +15,7 @@ export declare function saveStockAiAnalysisRecord(db: ReturnType<typeof getDB>, 
     stock_code: string;
     stock_name?: string;
     market: string;
+    sessionId?: string;
     content: string;
     status?: string;
 }): StockAiAnalysis;

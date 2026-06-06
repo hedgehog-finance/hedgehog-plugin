@@ -638,7 +638,6 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 							childLogger.error({ err: String(err) }, "Failed to record inbound session");
 						},
 					});
-
 					const startTime = Date.now();
 
 					const sendEvent = (type: string, data: any = {}) => {
@@ -729,6 +728,7 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 						try {
 							saveStockAiAnalysisRecord(getDB(), accountId, {
 								...stockAnalysisRequest,
+								sessionId: appPayload.sessionId || appPayload.params?.sessionId || "",
 								content: visibleContent
 							});
 							didSaveStockAnalysis = true;

@@ -32,6 +32,7 @@ export interface DailyMorningBriefing {
 	briefingDate: string;
 	content: string;
 	status: string;
+	sessionId: string;
 	watchlistSnapshot: unknown[];
 	createdAt: string;
 	updatedAt: string;

@@ -1,5 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { getDB } from "../../core/database.js";
-import { BuildDeepReasoningMessageParamsSchema, GetDeepReasoningDetailParamsSchema, QueryDeepReasoningHistoryParamsSchema } from "./schema.js";
+import { BuildDeepReasoningMessageParamsSchema, GetDeepReasoningDetailBySessionParamsSchema, GetDeepReasoningDetailParamsSchema, QueryDeepReasoningHistoryParamsSchema, SaveDeepReasoningParamsSchema } from "./schema.js";
 const DEEP_REASONING_SKILL = "hedgehog-news-deep-reasoning";
 const BuildDeepReasoningMessageAgentToolSchema = {
     type: "object",
@@ -8,7 +9,8 @@ const BuildDeepReasoningMessageAgentToolSchema = {
     properties: {
         newsId: { type: "string", description: "新闻 ID，例如 news-5" },
         sourceTitle: { type: "string", description: "新闻标题" },
-        sourceContent: { type: "string", description: "新闻正文" }
+        sourceContent: { type: "string", description: "新闻正文" },
+        sessionId: { type: "string", description: "前端生成的会话 ID" }
     }
 };
 function buildContent(args) {
@@ -22,14 +24,17 @@ function buildContent(args) {
     ].join("\n");
 }
 function buildDeepReasoningMessage(args) {
+    const sessionId = args.sessionId || "";
     const buildGeneratingSaveParams = () => JSON.stringify({
         sourceId: args.newsId,
         sourceTitle: args.sourceTitle,
+        sessionId,
         status: "generating",
         content: ""
     });
     const buildFinalSaveParams = (status) => JSON.stringify({
         sourceId: args.newsId,
+        sessionId,
         status,
         content: "..."
     });
@@ -43,7 +48,8 @@ function buildDeepReasoningMessage(args) {
         ].join("\n"),
         cw_context: JSON.stringify({
             sourceId: args.newsId,
-            sourceTitle: args.sourceTitle
+            sourceTitle: args.sourceTitle,
+            sessionId
         }),
         cw_content: buildContent(args),
         cw_output: [
@@ -54,12 +60,32 @@ function buildDeepReasoningMessage(args) {
 function selectGeneratingDeepReasoning(userId, sourceId) {
     const db = getDB();
     return db.prepare(`
-		SELECT id, sourceId, sourceTitle, status, content, createdAt, updatedAt
+		SELECT id, sourceId, sourceTitle, sessionId, status, content, createdAt, updatedAt
 		FROM news_deep_reasoning_analysis
 		WHERE userId = ? AND sourceId = ? AND status = 'generating'
 		ORDER BY updatedAt DESC, createdAt DESC
 		LIMIT 1
 	`).get(userId, sourceId);
+}
+function saveDeepReasoningRecord(userId, args) {
+    const db = getDB();
+    const id = randomUUID();
+    const sessionId = args.sessionId?.trim() || "";
+    db.prepare(`
+		INSERT INTO news_deep_reasoning_analysis (id, sourceId, sourceTitle, userId, market, sessionId, status, content)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(sourceId, userId, market) DO UPDATE SET
+			sourceTitle = CASE WHEN excluded.sourceTitle != '' THEN excluded.sourceTitle ELSE news_deep_reasoning_analysis.sourceTitle END,
+			sessionId = CASE WHEN excluded.sessionId != '' THEN excluded.sessionId ELSE news_deep_reasoning_analysis.sessionId END,
+			status = excluded.status,
+			content = excluded.content,
+			updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
+	`).run(id, args.sourceId, args.sourceTitle, userId, args.market, sessionId, args.status, args.content);
+    return db.prepare(`
+		SELECT id, sourceId, 'deduction' AS analysisType, sourceTitle, market, sessionId, status, content, createdAt, updatedAt
+		FROM news_deep_reasoning_analysis
+		WHERE userId = ? AND sourceId = ? AND market = ?
+	`).get(userId, args.sourceId, args.market);
 }
 export const deepReasoningTools = {
     query_deep_reasoning_history: {
@@ -73,7 +99,7 @@ export const deepReasoningTools = {
             const db = getDB();
             const offset = (args.page - 1) * args.pageSize;
             const rows = db.prepare(`
-				SELECT id, sourceId, sourceTitle, status, createdAt, updatedAt
+				SELECT id, sourceId, sourceTitle, sessionId, status, createdAt, updatedAt
 				FROM news_deep_reasoning_analysis
 				ORDER BY updatedAt DESC, createdAt DESC
 				LIMIT ? OFFSET ?
@@ -105,7 +131,7 @@ export const deepReasoningTools = {
             const db = getDB();
             if (args.sourceId) {
                 const row = db.prepare(`
-					SELECT id, sourceId, sourceTitle, status, content, createdAt, updatedAt
+					SELECT id, sourceId, sourceTitle, sessionId, status, content, createdAt, updatedAt
 					FROM news_deep_reasoning_analysis
 					WHERE sourceId = ?
 					ORDER BY updatedAt DESC, createdAt DESC
@@ -114,12 +140,31 @@ export const deepReasoningTools = {
                 return JSON.stringify({ success: true, data: row || null });
             }
             const row = db.prepare(`
-				SELECT id, sourceId, sourceTitle, status, content, createdAt, updatedAt
+				SELECT id, sourceId, sourceTitle, sessionId, status, content, createdAt, updatedAt
 				FROM news_deep_reasoning_analysis
 				WHERE id = ?
 				ORDER BY updatedAt DESC, createdAt DESC
 				LIMIT 1
 			`).get(args.id);
+            return JSON.stringify({ success: true, data: row || null });
+        }
+    },
+    get_deep_reasoning_detail_by_session: {
+        name: "get_deep_reasoning_detail_by_session",
+        label: "按会话查询深度推演详情",
+        description: "根据 sessionId 和 sourceId 查询深度推演详情元数据；不返回 content 正文。",
+        parameters: GetDeepReasoningDetailBySessionParamsSchema,
+        registerTool: false,
+        async execute(params, ctx) {
+            const args = GetDeepReasoningDetailBySessionParamsSchema.parse(params);
+            const db = getDB();
+            const row = db.prepare(`
+				SELECT id, sourceId, sourceTitle, market, sessionId, status, createdAt, updatedAt
+				FROM news_deep_reasoning_analysis
+				WHERE userId = ? AND sessionId = ? AND sourceId = ?
+				ORDER BY updatedAt DESC, createdAt DESC
+				LIMIT 1
+			`).get(ctx?.userId || "default", args.sessionId, args.sourceId);
             return JSON.stringify({ success: true, data: row || null });
         }
     },
@@ -142,19 +187,39 @@ export const deepReasoningTools = {
                 });
             }
             const message = buildDeepReasoningMessage(args);
+            const payload = JSON.parse(message);
             return JSON.stringify({
                 success: true,
                 data: {
                     message,
-                    payload: JSON.parse(message),
+                    payload,
                     sourceId: args.newsId,
                     saveParams: {
                         sourceId: args.newsId,
-                        sourceTitle: args.sourceTitle
+                        sourceTitle: args.sourceTitle,
+                        sessionId: args.sessionId || ""
                     },
                     skill: DEEP_REASONING_SKILL
                 }
             });
+        }
+    },
+    save_article_deep_reasoning_analysis: {
+        name: "save_article_deep_reasoning_analysis",
+        description: "保存新闻深度推演结果。生成前必须先以 status=generating、content=\"\" 调用，并传入 sourceId、sourceTitle、sourceContent、market；生成成功后以 status=completed 保存完整正文 content；生成失败后以 status=failed 保存完整错误信息。",
+        parameters: SaveDeepReasoningParamsSchema,
+        registerTool: true,
+        async execute(params, ctx) {
+            const args = SaveDeepReasoningParamsSchema.parse(params);
+            const userId = ctx?.userId || "default";
+            if (args.status === "generating") {
+                const generating = selectGeneratingDeepReasoning(userId, args.sourceId);
+                if (generating) {
+                    return JSON.stringify({ success: true, skipped: true, reason: "already_generating", data: generating });
+                }
+            }
+            const data = saveDeepReasoningRecord(userId, args);
+            return JSON.stringify({ success: true, data });
         }
     }
 };

@@ -16,6 +16,7 @@ export interface RelayInboundMessage {
     text?: string;
     method?: string;
     params?: any;
+    sessionId?: string;
     replyTo?: string;
 }
 export interface OpenClawSessionEntry {
