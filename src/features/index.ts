@@ -15,7 +15,7 @@ export interface RuntimeTool {
     parameters: unknown;
     registerTool?: boolean;
     agentToolTarget?: "main";
-    execute(params: unknown, ctx?: { userId: string }): Promise<string>;
+    execute(params: unknown, ctx?: { userId?: string; sessionKey?: string; sessionId?: string; runId?: string }): Promise<string>;
 }
 
 export const allFeaturesTools: Record<string, RuntimeTool> = {

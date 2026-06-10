@@ -267,6 +267,9 @@ function runDailyMorningBriefingMigrations(db) {
     const snapshotColumn = tableColumnNames.has("watchlistSnapshot") ? "watchlistSnapshot" : "watchlistSnapshotJson";
     const statusColumn = tableColumnNames.has("status") ? "status" : "'completed'";
     const sessionIdColumn = tableColumnNames.has("sessionId") ? "sessionId" : "''";
+    const lastNudgeAtColumn = tableColumnNames.has("lastNudgeAt") ? "lastNudgeAt" : "''";
+    const nextRetryAtColumn = tableColumnNames.has("nextRetryAt") ? "nextRetryAt" : "''";
+    const attemptCountColumn = tableColumnNames.has("attemptCount") ? "attemptCount" : "0";
     db.exec("BEGIN");
     try {
         db.exec(`
@@ -279,13 +282,16 @@ function runDailyMorningBriefingMigrations(db) {
 				content                TEXT NOT NULL,
 				status                 TEXT NOT NULL DEFAULT 'completed',
 				sessionId              TEXT NOT NULL DEFAULT '',
+				lastNudgeAt            TEXT NOT NULL DEFAULT '',
+				nextRetryAt            TEXT NOT NULL DEFAULT '',
+				attemptCount           INTEGER NOT NULL DEFAULT 0,
 				watchlistSnapshot      TEXT NOT NULL DEFAULT '[]',
 				createdAt              DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
 				updatedAt              DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW'))
 			);
 
-			INSERT INTO daily_morning_briefings_history (id, market, briefingDate, content, status, sessionId, watchlistSnapshot, createdAt, updatedAt)
-			SELECT id, market, briefingDate, content, ${statusColumn}, ${sessionIdColumn}, ${snapshotColumn}, createdAt, updatedAt
+			INSERT INTO daily_morning_briefings_history (id, market, briefingDate, content, status, sessionId, lastNudgeAt, nextRetryAt, attemptCount, watchlistSnapshot, createdAt, updatedAt)
+			SELECT id, market, briefingDate, content, ${statusColumn}, ${sessionIdColumn}, ${lastNudgeAtColumn}, ${nextRetryAtColumn}, ${attemptCountColumn}, ${snapshotColumn}, createdAt, updatedAt
 			FROM daily_morning_briefings;
 
 			DROP TABLE daily_morning_briefings;
@@ -315,6 +321,15 @@ function runDailyMorningBriefingSchemaMigrations(db) {
     }
     if (!columnNames.has("sessionId")) {
         db.prepare("ALTER TABLE daily_morning_briefings ADD COLUMN sessionId TEXT NOT NULL DEFAULT ''").run();
+    }
+    if (!columnNames.has("lastNudgeAt")) {
+        db.prepare("ALTER TABLE daily_morning_briefings ADD COLUMN lastNudgeAt TEXT NOT NULL DEFAULT ''").run();
+    }
+    if (!columnNames.has("nextRetryAt")) {
+        db.prepare("ALTER TABLE daily_morning_briefings ADD COLUMN nextRetryAt TEXT NOT NULL DEFAULT ''").run();
+    }
+    if (!columnNames.has("attemptCount")) {
+        db.prepare("ALTER TABLE daily_morning_briefings ADD COLUMN attemptCount INTEGER NOT NULL DEFAULT 0").run();
     }
 }
 function runStockAiAnalysisMigrations(db) {
@@ -778,6 +793,9 @@ export function getDB() {
 			content                TEXT NOT NULL,
 			status                 TEXT NOT NULL DEFAULT 'completed',
 			sessionId              TEXT NOT NULL DEFAULT '',
+			lastNudgeAt            TEXT NOT NULL DEFAULT '',
+			nextRetryAt            TEXT NOT NULL DEFAULT '',
+			attemptCount           INTEGER NOT NULL DEFAULT 0,
 			watchlistSnapshot      TEXT NOT NULL DEFAULT '[]',
 			createdAt              DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
 			updatedAt              DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW'))

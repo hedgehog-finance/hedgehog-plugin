@@ -8,11 +8,10 @@ const DAILY_MORNING_BRIEFING_SESSION_KEY = `cron:${DAILY_MORNING_BRIEFING_CRON_I
 const DAILY_MORNING_BRIEFING_SKILL = "hedgehog-daily-morning-briefing";
 const DAILY_MORNING_BRIEFING_MESSAGE = JSON.stringify({
 	cw_system_prompt: [
-		"开始分析前必须先调用 save_daily_morning_briefing，参数为 {\"status\":\"generating\",\"content\":\"\"}；如果返回 skipped=true，必须立即停止，不要继续调用 skill 或生成正文。",
-		`必须触发并使用 ${DAILY_MORNING_BRIEFING_SKILL} skill 生成盘前简报。`,
-		"生成成功后必须调用 save_daily_morning_briefing，参数为 {\"status\":\"completed\",\"content\":\"...\"}，content 传最终完整早报正文。",
-		"生成失败后必须调用 save_daily_morning_briefing，参数为 {\"status\":\"failed\",\"content\":\"...\"}，content 存放完整错误信息。",
-		"如果最终内容包含 [图表数据]，正文必须已经包含所有对应图表占位符。"
+		"必须先调用 dispatch_daily_morning_briefing，参数为 {}。",
+		"dispatch_daily_morning_briefing 会负责判断 7:30 前跳过、当天已完成跳过、当天生成中则唤醒当天生成会话、当天未触发则启动当天生成会话。",
+		"调用 dispatch_daily_morning_briefing 后必须立即停止，不要直接调用 save_daily_morning_briefing、不要直接触发 skill、不要自行生成早报正文。",
+		`真正的每日早报生成会在按日期隔离的会话中触发并使用 ${DAILY_MORNING_BRIEFING_SKILL} skill 完成。`
 	].join("\n"),
 	cw_market: "CN",
 	cw_content: [
@@ -76,7 +75,7 @@ function buildDailyMorningBriefingCronConfig(existing?: CronJobLike): DailyMorni
 		enabled: true,
 		schedule: {
 			kind: "cron",
-			expr: "30 7 * * *",
+			expr: "*/30 * * * *",
 			...(existingTz ? { tz: existingTz } : {})
 		},
 		sessionTarget: "isolated",

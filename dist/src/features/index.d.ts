@@ -6,7 +6,10 @@ export interface RuntimeTool {
     registerTool?: boolean;
     agentToolTarget?: "main";
     execute(params: unknown, ctx?: {
-        userId: string;
+        userId?: string;
+        sessionKey?: string;
+        sessionId?: string;
+        runId?: string;
     }): Promise<string>;
 }
 export declare const allFeaturesTools: Record<string, RuntimeTool>;

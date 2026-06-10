@@ -10,6 +10,7 @@
     "tools": [
       "get_watchlist",
       "get_industry_list",
+      "dispatch_daily_morning_briefing",
       "save_daily_morning_briefing",
       "save_stock_ai_analysis",
       "save_information_verification",
