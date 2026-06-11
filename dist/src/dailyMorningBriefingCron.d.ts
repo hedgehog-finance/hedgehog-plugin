@@ -12,10 +12,25 @@ type CronServiceLike = {
 };
 type CronJobLike = {
     id?: string;
+    agentId?: string;
     name?: string;
+    description?: string;
+    enabled?: boolean;
+    sessionTarget?: string;
+    wakeMode?: string;
+    payload?: {
+        kind?: string;
+        message?: string;
+        timeoutSeconds?: number;
+    };
+    delivery?: {
+        mode?: string;
+    };
+    deleteAfterRun?: boolean;
     sessionKey?: string;
     schedule?: {
         kind?: string;
+        expr?: string;
         tz?: unknown;
     };
 };

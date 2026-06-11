@@ -50,6 +50,37 @@ function buildDailyMorningBriefingCronConfig(existing) {
 function isDailyMorningBriefingCronJob(job) {
     return job?.name === DAILY_MORNING_BRIEFING_CRON_ID || job?.sessionKey === DAILY_MORNING_BRIEFING_SESSION_KEY;
 }
+function normalizeDailyMorningBriefingCronConfig(input) {
+    const tz = typeof input.schedule?.tz === "string" && input.schedule.tz.trim()
+        ? input.schedule.tz
+        : undefined;
+    return {
+        agentId: input.agentId,
+        name: input.name,
+        description: input.description,
+        enabled: input.enabled,
+        schedule: {
+            kind: input.schedule?.kind,
+            expr: input.schedule?.expr,
+            ...(tz ? { tz } : {})
+        },
+        sessionTarget: input.sessionTarget,
+        wakeMode: input.wakeMode,
+        payload: {
+            kind: input.payload?.kind,
+            message: input.payload?.message,
+            timeoutSeconds: input.payload?.timeoutSeconds
+        },
+        delivery: {
+            mode: input.delivery?.mode
+        },
+        deleteAfterRun: input.deleteAfterRun
+    };
+}
+function isDailyMorningBriefingCronConfigCurrent(job, config) {
+    return JSON.stringify(normalizeDailyMorningBriefingCronConfig(job))
+        === JSON.stringify(normalizeDailyMorningBriefingCronConfig(config));
+}
 export async function ensureDailyMorningBriefingCron(cron) {
     try {
         if (!cron) {
@@ -59,7 +90,10 @@ export async function ensureDailyMorningBriefingCron(cron) {
         const existingJobs = (await cron.list({ includeDisabled: true })).filter(isDailyMorningBriefingCronJob);
         const [primaryJob, ...duplicateJobs] = existingJobs;
         if (primaryJob?.id) {
-            await cron.update(primaryJob.id, buildDailyMorningBriefingCronConfig(primaryJob));
+            const config = buildDailyMorningBriefingCronConfig(primaryJob);
+            if (!isDailyMorningBriefingCronConfigCurrent(primaryJob, config)) {
+                await cron.update(primaryJob.id, config);
+            }
         }
         else {
             await cron.add(buildDailyMorningBriefingCronConfig());
