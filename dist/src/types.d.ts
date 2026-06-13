@@ -9,7 +9,7 @@ export interface HedgehogFinanceResolvedAccount {
     configured: boolean;
 }
 export interface RelayInboundMessage {
-    type: "req" | "reply" | "assistant_message_start" | "item_event" | "tool_start" | "tool_result" | "command_output" | "usage" | "model" | "reasoning" | "reasoning_end";
+    type: "req" | "reply" | "assistant_message_start" | "item_event" | "tool_start" | "tool_result" | "command_output" | "usage" | "model" | "reasoning" | "reasoning_end" | "turn_complete";
     from: string;
     chatId: string;
     id: string;

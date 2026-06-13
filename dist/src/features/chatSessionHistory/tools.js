@@ -1,0 +1,223 @@
+import * as fsAsync from "node:fs/promises";
+import { QueryChatSessionHistoryParamsSchema } from "./schema.js";
+function textFromContent(content) {
+    if (typeof content === "string")
+        return content;
+    if (!Array.isArray(content))
+        return "";
+    return content
+        .map((part) => {
+        if (typeof part === "string")
+            return part;
+        if (!part || typeof part !== "object")
+            return "";
+        const record = part;
+        if (typeof record.text === "string")
+            return record.text;
+        if (typeof record.content === "string")
+            return record.content;
+        return "";
+    })
+        .filter(Boolean)
+        .join("");
+}
+function extractTranscriptMessage(entry, includeRaw) {
+    if (!entry || typeof entry !== "object")
+        return null;
+    const record = entry;
+    const message = record.message && typeof record.message === "object" && !Array.isArray(record.message)
+        ? record.message
+        : record;
+    const role = typeof message.role === "string" ? message.role : "";
+    if (!role)
+        return null;
+    const text = textFromContent(message.content) || textFromContent(message.text);
+    const id = typeof record.id === "string"
+        ? record.id
+        : typeof message.id === "string"
+            ? message.id
+            : `${role}_${typeof record.timestamp === "number" ? record.timestamp : Date.now()}`;
+    return {
+        id,
+        role,
+        text,
+        timestamp: typeof record.timestamp === "number" || typeof record.timestamp === "string"
+            ? record.timestamp
+            : typeof message.timestamp === "number" || typeof message.timestamp === "string"
+                ? message.timestamp
+                : undefined,
+        ...(includeRaw ? { raw: message } : {})
+    };
+}
+function isTurnCompleteEntry(entry, interactionId) {
+    const type = typeof entry.type === "string" ? entry.type : "";
+    const event = typeof entry.event === "string" ? entry.event : "";
+    const replyTo = typeof entry.replyTo === "string" ? entry.replyTo : typeof entry.reply_to === "string" ? entry.reply_to : "";
+    const idMatches = !interactionId || replyTo === interactionId || entry.interactionId === interactionId || entry.turnId === interactionId;
+    if (!idMatches)
+        return false;
+    if (type === "turn_complete" || event === "turn_complete")
+        return true;
+    if (type === "reply" && entry.isFinal === true && typeof entry.text !== "string" && typeof entry.content !== "string" && typeof entry.reply !== "string")
+        return true;
+    return false;
+}
+async function readTranscriptEntries(params) {
+    let content = "";
+    try {
+        content = await fsAsync.readFile(params.filePath, "utf-8");
+    }
+    catch {
+        return [];
+    }
+    const lines = content.split("\n").filter(Boolean);
+    const entries = [];
+    for (const line of lines) {
+        try {
+            const entry = JSON.parse(line);
+            const message = extractTranscriptMessage(entry, params.includeRaw);
+            const raw = entry && typeof entry === "object" && !Array.isArray(entry) ? entry : {};
+            if (message && (params.includeTools || message.role === "user" || message.role === "assistant")) {
+                entries.push({ message, raw });
+            }
+            else {
+                entries.push({ message: null, raw });
+            }
+        }
+        catch {
+            continue;
+        }
+    }
+    return entries;
+}
+function selectInteraction(entries, limit, interactionId) {
+    const messages = entries.flatMap((entry) => entry.message ? [entry.message] : []);
+    if (messages.length === 0) {
+        return {
+            messages: [],
+            turnComplete: false,
+            turnCompleteSource: "none",
+            lastUserMessageId: null,
+            lastAssistantMessageId: null,
+        };
+    }
+    let startIndex = -1;
+    if (interactionId) {
+        startIndex = messages.findIndex((message) => message.role === "user" && message.id === interactionId);
+    }
+    if (startIndex < 0) {
+        for (let index = messages.length - 1; index >= 0; index--) {
+            if (messages[index].role === "user") {
+                startIndex = index;
+                break;
+            }
+        }
+    }
+    const interaction = startIndex >= 0 ? messages.slice(startIndex) : messages.slice(-1);
+    const lastUserMessage = [...interaction].reverse().find((message) => message.role === "user");
+    const lastAssistantMessage = [...interaction].reverse().find((message) => (message.role === "assistant" && message.text.trim().length > 0));
+    const hasLifecycleComplete = entries.some((entry) => isTurnCompleteEntry(entry.raw, interactionId || lastUserMessage?.id));
+    return {
+        messages: interaction.slice(-limit),
+        turnComplete: hasLifecycleComplete || Boolean(lastUserMessage && lastAssistantMessage),
+        turnCompleteSource: hasLifecycleComplete ? "lifecycle" : lastUserMessage && lastAssistantMessage ? "messages" : "none",
+        lastUserMessageId: lastUserMessage?.id || null,
+        lastAssistantMessageId: lastAssistantMessage?.id || null,
+    };
+}
+function resolveChatSession(rt, accountId, sessionId, requestedAgentId) {
+    const cfg = rt.config.loadConfig();
+    const chatId = sessionId;
+    const route = rt.channel.routing.resolveAgentRoute({
+        cfg,
+        channel: "hedgehog_finance",
+        accountId,
+        peer: { kind: "direct", id: chatId },
+    });
+    let agentId = requestedAgentId || route.agentId;
+    let sessionKey = route.sessionKey;
+    if (requestedAgentId || chatId.startsWith("main")) {
+        agentId = requestedAgentId || "main";
+        sessionKey = rt.channel.routing.buildAgentSessionKey({
+            agentId,
+            channel: "hedgehog_finance",
+            accountId,
+            peer: { kind: "direct", id: chatId },
+        });
+    }
+    let entry = rt.agent.session.getSessionEntry({ agentId, sessionKey });
+    if (entry)
+        return { agentId, sessionKey, entry, matchedBy: "chatId" };
+    const matched = rt.agent.session
+        .listSessionEntries({ agentId })
+        .find((item) => item.entry.sessionId === sessionId);
+    if (matched) {
+        return {
+            cfg,
+            agentId,
+            sessionKey: matched.sessionKey,
+            entry: matched.entry,
+            matchedBy: "openclawSessionId"
+        };
+    }
+    return { agentId, sessionKey, entry: null, matchedBy: "none" };
+}
+export const chatSessionHistoryTools = {
+    query_chat_session_history: {
+        name: "query_chat_session_history",
+        description: "根据前端 Chat 页 sessionId 查询 OpenClaw 会话最后一次交互内容。该 sessionId 当前等同于 chatId；接口会自动推导 sessionKey 并读取会话 transcript。",
+        parameters: QueryChatSessionHistoryParamsSchema,
+        registerTool: false,
+        async execute(params, ctx) {
+            const args = QueryChatSessionHistoryParamsSchema.parse(params);
+            const rt = ctx?.runtime;
+            const accountId = ctx?.userId;
+            if (!rt || !accountId) {
+                return JSON.stringify({ success: false, error: "runtime or userId unavailable" });
+            }
+            const resolved = resolveChatSession(rt, String(accountId), args.sessionId, args.agentId);
+            if (!resolved.entry) {
+                return JSON.stringify({
+                    success: true,
+                    data: {
+                        sessionId: args.sessionId,
+                        agentId: resolved.agentId,
+                        sessionKey: resolved.sessionKey,
+                        openclawSessionId: null,
+                        matchedBy: resolved.matchedBy,
+                        interactionId: args.interactionId || null,
+                        turnComplete: false,
+                        turnCompleteSource: "none",
+                        lastUserMessageId: null,
+                        lastAssistantMessageId: null,
+                        messages: []
+                    }
+                });
+            }
+            const filePath = rt.agent.session.resolveSessionFilePath(resolved.entry.sessionId, resolved.entry, { agentId: resolved.agentId });
+            const entries = await readTranscriptEntries({
+                filePath,
+                includeTools: args.includeTools,
+                includeRaw: args.includeRaw
+            });
+            const selectedInteraction = selectInteraction(entries, args.limit, args.interactionId);
+            return JSON.stringify({
+                success: true,
+                data: {
+                    sessionId: args.sessionId,
+                    agentId: resolved.agentId,
+                    sessionKey: resolved.sessionKey,
+                    openclawSessionId: resolved.entry.sessionId,
+                    matchedBy: resolved.matchedBy,
+                    interactionId: args.interactionId || null,
+                    turnComplete: selectedInteraction.turnComplete,
+                    turnCompleteSource: selectedInteraction.turnCompleteSource,
+                    lastUserMessageId: selectedInteraction.lastUserMessageId,
+                    lastAssistantMessageId: selectedInteraction.lastAssistantMessageId,
+                    messages: selectedInteraction.messages
+                }
+            });
+        }
+    }
+};
+//# sourceMappingURL=tools.js.map

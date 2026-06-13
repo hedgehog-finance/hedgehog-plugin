@@ -7,6 +7,7 @@ import { dailyMorningBriefingTools } from "./dailyMorningBriefing/tools.js";
 import { stockBasicTools } from "./stockBasic/tools.js";
 import { informationVerificationTools } from "./informationVerification/tools.js";
 import { deepReasoningTools } from "./deepReasoning/tools.js";
+import { chatSessionHistoryTools } from "./chatSessionHistory/tools.js";
 export const allFeaturesTools = {
     ...watchlistTools,
     ...profileLibraryTools,
@@ -16,6 +17,7 @@ export const allFeaturesTools = {
     ...dailyMorningBriefingTools,
     ...stockBasicTools,
     ...informationVerificationTools,
-    ...deepReasoningTools
+    ...deepReasoningTools,
+    ...chatSessionHistoryTools
 };
 //# sourceMappingURL=index.js.map

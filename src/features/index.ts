@@ -7,6 +7,7 @@ import { dailyMorningBriefingTools } from "./dailyMorningBriefing/tools.js";
 import { stockBasicTools } from "./stockBasic/tools.js";
 import { informationVerificationTools } from "./informationVerification/tools.js";
 import { deepReasoningTools } from "./deepReasoning/tools.js";
+import { chatSessionHistoryTools } from "./chatSessionHistory/tools.js";
 
 export interface RuntimeTool {
     name: string;
@@ -27,5 +28,6 @@ export const allFeaturesTools: Record<string, RuntimeTool> = {
     ...dailyMorningBriefingTools,
     ...stockBasicTools,
     ...informationVerificationTools,
-    ...deepReasoningTools
+    ...deepReasoningTools,
+    ...chatSessionHistoryTools
 };

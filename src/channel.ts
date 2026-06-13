@@ -764,6 +764,14 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 							fromCode: code
 						}));
 
+						ws.send(JSON.stringify({
+							type: "turn_complete",
+							to: from,
+							chatId: chatId,
+							replyTo: id,
+							fromCode: code
+						}));
+
 						const turnUsage = await getCurrentTurnUsageAsync(
 							agentId,
 							sessionKey,

@@ -670,6 +670,13 @@ export const hedgehogFinancePlugin = {
                             isFinal: true,
                             fromCode: code
                         }));
+                        ws.send(JSON.stringify({
+                            type: "turn_complete",
+                            to: from,
+                            chatId: chatId,
+                            replyTo: id,
+                            fromCode: code
+                        }));
                         const turnUsage = await getCurrentTurnUsageAsync(agentId, sessionKey, sessionIdBefore, lineCountBefore);
                         if (ws?.readyState !== WebSocket.OPEN)
                             return;

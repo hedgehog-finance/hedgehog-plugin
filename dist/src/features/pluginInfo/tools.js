@@ -76,6 +76,8 @@ function normalizeSkillVersionUpdates(params) {
 }
 function updateSkillVersions(params) {
     const updates = normalizeSkillVersionUpdates(params);
+    // 在操作数据库前，确保数据库已初始化
+    // getDB() 会自动创建数据库文件和表结构
     const db = getDB();
     const stmt = db.prepare(`
 		INSERT INTO skill_versions (skillName, version, updatedAt)

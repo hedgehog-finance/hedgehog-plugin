@@ -3,6 +3,7 @@ export const InformationVerificationStatusSchema = z.enum(["generating", "comple
 export const BuildInformationVerificationMessageParamsSchema = z.object({
     newsId: z.string().trim().min(1).describe("新闻 ID，例如 news-5"),
     sourceTitle: z.string().trim().min(1).describe("新闻标题"),
+    publishTime: z.string().trim().optional().default("").describe("新闻发布时间"),
     sourceContent: z.string().trim().min(1).describe("新闻正文"),
     sessionId: z.string().trim().optional().default("").describe("前端生成的会话 ID")
 });

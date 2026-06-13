@@ -19,6 +19,7 @@ const DAILY_MORNING_BRIEFING_MESSAGE = JSON.stringify({
 	].join("\n"),
 	cw_output: [
 		`输出结构以 ${DAILY_MORNING_BRIEFING_SKILL} skill 的交付模板为准。`,
+		'强制启用“本地缓存任务日志”',
 		CHART_OUTPUT_GUIDANCE
 	].join("\n")
 });

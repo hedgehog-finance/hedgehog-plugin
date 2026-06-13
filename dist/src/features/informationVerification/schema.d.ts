@@ -3,6 +3,7 @@ export declare const InformationVerificationStatusSchema: z.ZodEnum<["generating
 export declare const BuildInformationVerificationMessageParamsSchema: z.ZodObject<{
     newsId: z.ZodString;
     sourceTitle: z.ZodString;
+    publishTime: z.ZodDefault<z.ZodOptional<z.ZodString>>;
     sourceContent: z.ZodString;
     sessionId: z.ZodDefault<z.ZodOptional<z.ZodString>>;
 }, "strip", z.ZodTypeAny, {
@@ -10,11 +11,13 @@ export declare const BuildInformationVerificationMessageParamsSchema: z.ZodObjec
     sourceTitle: string;
     sourceContent: string;
     newsId: string;
+    publishTime: string;
 }, {
     sourceTitle: string;
     sourceContent: string;
     newsId: string;
     sessionId?: string | undefined;
+    publishTime?: string | undefined;
 }>;
 export type BuildInformationVerificationMessageParams = z.infer<typeof BuildInformationVerificationMessageParamsSchema>;
 export declare const QueryInformationVerificationHistoryParamsSchema: z.ZodObject<{

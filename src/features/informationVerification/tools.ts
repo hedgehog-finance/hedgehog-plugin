@@ -27,20 +27,23 @@ const BuildInformationVerificationMessageAgentToolSchema = {
 	properties: {
 		newsId: { type: "string", description: "新闻 ID，例如 news-5" },
 		sourceTitle: { type: "string", description: "新闻标题" },
+		publishTime: { type: "string", description: "新闻发布时间" },
 		sourceContent: { type: "string", description: "新闻正文" },
 		sessionId: { type: "string", description: "前端生成的会话 ID" }
 	}
 };
 
 function buildContent(args: BuildInformationVerificationMessageParams): string {
-	return [
+	const content = [
 		"对这条新闻进行信息求证",
 		"",
 		`新闻标题：${args.sourceTitle}`,
-		"",
-		"新闻正文：",
-		args.sourceContent
-	].join("\n");
+	];
+	if (args.publishTime) {
+		content.push(`发布时间：${args.publishTime}`);
+	}
+	content.push("", "新闻正文：", args.sourceContent);
+	return content.join("\n");
 }
 
 function buildInformationVerificationMessage(args: BuildInformationVerificationMessageParams): string {
@@ -68,11 +71,13 @@ function buildInformationVerificationMessage(args: BuildInformationVerificationM
 		cw_context: JSON.stringify({
 			sourceId: args.newsId,
 			sourceTitle: args.sourceTitle,
+			publishTime: args.publishTime,
 			sessionId
 		}),
 		cw_content: buildContent(args),
 		cw_output: [
-			`输出结构以 ${INFORMATION_VERIFICATION_SKILL} skill 的交付模板为准。`
+			`输出结构以 ${INFORMATION_VERIFICATION_SKILL} skill 的交付模板为准。`,
+			'强制启用“本地缓存任务日志”'
 		].join("\n")
 	});
 }

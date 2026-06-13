@@ -22,7 +22,8 @@ export interface RelayInboundMessage {
         | "usage"
         | "model"
         | "reasoning"
-        | "reasoning_end";
+        | "reasoning_end"
+        | "turn_complete";
     from: string;
     chatId: string;
     id: string;
