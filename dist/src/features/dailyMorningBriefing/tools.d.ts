@@ -4,12 +4,13 @@ interface RuntimeTool {
     description: string;
     parameters: unknown;
     registerTool?: boolean;
-    execute(params: unknown, ctx?: {
-        userId?: string;
-        sessionKey?: string;
-        sessionId?: string;
-        runId?: string;
-    }): Promise<string>;
+    execute(params: unknown, ctx?: RuntimeToolContext): Promise<string>;
 }
+type RuntimeToolContext = {
+    userId?: string;
+    sessionKey?: string;
+    sessionId?: string;
+    runId?: string;
+};
 export declare const dailyMorningBriefingTools: Record<string, RuntimeTool>;
 export {};

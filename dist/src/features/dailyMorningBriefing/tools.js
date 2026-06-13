@@ -1,5 +1,5 @@
 import { getDB } from "../../core/database.js";
-import { getHedgehogRuntime } from "../../runtime.js";
+import { scheduleDailyMorningBriefingTurnCron } from "../../dailyMorningBriefingCron.js";
 import { HEDGEHOG_AGENT_ID } from "../../openclawConstants.js";
 import { CHART_OUTPUT_GUIDANCE, ensureChartPlaceholdersInBody } from "../chartOutput.js";
 import { GetDailyMorningBriefingDetailParamsSchema, QueryDailyMorningBriefingsParamsSchema, SaveDailyMorningBriefingParamsSchema } from "./schema.js";
@@ -9,7 +9,6 @@ const DAILY_MORNING_BRIEFING_START_MINUTE = 30;
 const DAILY_MORNING_BRIEFING_CRON_ID = "hedgehog_daily_morning_briefing";
 const DAILY_MORNING_BRIEFING_SKILL = "hedgehog-daily-morning-briefing";
 const DAILY_MORNING_BRIEFING_CONTINUE_MESSAGE = "完成了吗，如果没完成请继续";
-const DAILY_MORNING_BRIEFING_NUDGE_INTERVAL_MS = 30 * 60 * 1000;
 const DAILY_MORNING_BRIEFING_MAX_ATTEMPTS_PER_DAY = 3;
 const DAILY_MORNING_BRIEFING_FAILED_RETRY_COOLDOWNS_MS = [
     30 * 60 * 1000,
@@ -97,8 +96,15 @@ function buildDailyMorningBriefingSessionId(market, briefingDate) {
     return `agent:${HEDGEHOG_AGENT_ID}:cron:${DAILY_MORNING_BRIEFING_CRON_ID}:${market}:${briefingDate}`;
 }
 function buildDailyMorningBriefingAttemptSessionId(market, briefingDate, attemptCount) {
-    const base = buildDailyMorningBriefingSessionId(market, briefingDate);
-    return attemptCount > 1 ? `${base}:attempt:${attemptCount}` : base;
+    return buildDailyMorningBriefingSessionId(market, briefingDate);
+}
+async function scheduleDailyMorningBriefingTurn(action, sessionKey, message, idempotencyKey) {
+    await scheduleDailyMorningBriefingTurnCron({
+        action,
+        sessionKey,
+        message,
+        idempotencyKey
+    });
 }
 function selectDailyMorningBriefing(db, id) {
     const row = db.prepare(`
@@ -134,6 +140,14 @@ function selectExistingActiveDailyMorningBriefing(db, market, briefingDate) {
 		LIMIT 1
 	`).get(market, briefingDate);
     return row ? selectDailyMorningBriefing(db, row.id) : undefined;
+}
+function isDailyMorningBriefingCompleted(db, id) {
+    const row = db.prepare(`
+		SELECT status
+		FROM daily_morning_briefings
+		WHERE id = ?
+	`).get(id);
+    return row?.status === "completed";
 }
 function mapDailyMorningBriefingRow(row) {
     return {
@@ -176,11 +190,11 @@ function getFullWatchlistSnapshot(db) {
         };
     });
 }
-function insertGeneratingDailyMorningBriefing(db, market, briefingDate, id, sessionId, watchlistSnapshot) {
+function insertScheduledDailyMorningBriefing(db, market, briefingDate, id, sessionId, lastNudgeAt, watchlistSnapshot) {
     db.prepare(`
 		INSERT INTO daily_morning_briefings (id, market, briefingDate, content, status, sessionId, lastNudgeAt, nextRetryAt, attemptCount, watchlistSnapshot)
-		VALUES (?, ?, ?, '', 'generating', ?, '', '', 1, ?)
-	`).run(id, market, briefingDate, sessionId, watchlistSnapshot);
+		VALUES (?, ?, ?, '', 'scheduled', ?, ?, '', 1, ?)
+	`).run(id, market, briefingDate, sessionId, lastNudgeAt, watchlistSnapshot);
     return selectDailyMorningBriefing(db, id);
 }
 function markDailyMorningBriefingFailed(db, id, content) {
@@ -197,6 +211,7 @@ function markDailyMorningBriefingFailed(db, id, content) {
 			nextRetryAt = ?,
 			updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
 		WHERE id = ?
+			AND status != 'completed'
 	`).run(content, getNextRetryAtForFailedAttempt(attemptCount), id);
     return result.changes > 0;
 }
@@ -218,21 +233,38 @@ function claimDailyMorningBriefingDispatch(db, market, briefingDate) {
             return { action: "skip", reason: "already_completed", data: mapDailyMorningBriefingRow(existing) };
         }
         if (existing?.status === "generating") {
-            const lastNudgeAtMs = getUnixMsFromDbTimestamp(existing.lastNudgeAt);
-            if (lastNudgeAtMs > 0 && Date.now() - lastNudgeAtMs < DAILY_MORNING_BRIEFING_NUDGE_INTERVAL_MS) {
+            const halfHourBucket = getHalfHourBucket();
+            if (existing.lastNudgeAt === halfHourBucket) {
                 db.exec("COMMIT");
                 return { action: "skip", reason: "nudge_throttled", data: mapDailyMorningBriefingRow(existing) };
             }
             db.prepare(`
 				UPDATE daily_morning_briefings
-				SET lastNudgeAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW'),
+				SET lastNudgeAt = ?,
 					updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
 				WHERE id = ?
 					AND status = 'generating'
-			`).run(id);
+			`).run(halfHourBucket, id);
             const data = selectDailyMorningBriefing(db, id);
             db.exec("COMMIT");
-            return { action: "continue", data, idempotencyKey: `${id}:continue:${getHalfHourBucket()}` };
+            return { action: "continue", data, idempotencyKey: `${id}:continue:${halfHourBucket}` };
+        }
+        if (existing?.status === "scheduled") {
+            const halfHourBucket = getHalfHourBucket();
+            if (existing.lastNudgeAt === halfHourBucket) {
+                db.exec("COMMIT");
+                return { action: "skip", reason: "nudge_throttled", data: mapDailyMorningBriefingRow(existing) };
+            }
+            db.prepare(`
+				UPDATE daily_morning_briefings
+				SET lastNudgeAt = ?,
+					updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
+				WHERE id = ?
+					AND status = 'scheduled'
+			`).run(halfHourBucket, id);
+            const data = selectDailyMorningBriefing(db, id);
+            db.exec("COMMIT");
+            return { action: "start", data, idempotencyKey: `${id}:start:${data.sessionId}:${halfHourBucket}` };
         }
         if (existing) {
             const currentAttemptCount = Math.max(0, Number(existing.attemptCount) || 0);
@@ -250,19 +282,19 @@ function claimDailyMorningBriefingDispatch(db, market, briefingDate) {
             db.prepare(`
 				UPDATE daily_morning_briefings
 				SET content = '',
-					status = 'generating',
+					status = 'scheduled',
 					sessionId = ?,
-					lastNudgeAt = '',
+					lastNudgeAt = ?,
 					nextRetryAt = '',
 					attemptCount = ?,
 					watchlistSnapshot = ?,
 					updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
 				WHERE id = ?
 					AND status != 'completed'
-			`).run(sessionId, nextAttemptCount, watchlistSnapshot, id);
+			`).run(sessionId, getHalfHourBucket(), nextAttemptCount, watchlistSnapshot, id);
         }
         else {
-            insertGeneratingDailyMorningBriefing(db, market, briefingDate, id, buildDailyMorningBriefingAttemptSessionId(market, briefingDate, 1), watchlistSnapshot);
+            insertScheduledDailyMorningBriefing(db, market, briefingDate, id, buildDailyMorningBriefingAttemptSessionId(market, briefingDate, 1), getHalfHourBucket(), watchlistSnapshot);
         }
         const data = selectDailyMorningBriefing(db, id);
         db.exec("COMMIT");
@@ -278,10 +310,10 @@ export const dailyMorningBriefingTools = {
     dispatch_daily_morning_briefing: {
         name: "dispatch_daily_morning_briefing",
         label: "调度每日盘前早报",
-        description: "调度每日盘前早报。7:30 前跳过；当天已完成则跳过；当天生成中则向当天生成会话发送“完成了吗，如果没完成请继续”；当天未触发则创建当天生成记录并在按日期隔离的会话中启动早报生成。",
+        description: "调度每日盘前早报。7:30 前跳过；当天已完成则跳过；当天生成中则通过会话调度发送“完成了吗，如果没完成请继续”；当天未触发则创建当天生成记录并在按日期隔离的会话中启动早报生成。",
         parameters: DispatchDailyMorningBriefingAgentToolSchema,
         registerTool: true,
-        async execute() {
+        async execute(_params, ctx) {
             const db = getDB();
             const market = DAILY_MORNING_BRIEFING_MARKET;
             const briefingDate = getLocalDateString();
@@ -289,23 +321,15 @@ export const dailyMorningBriefingTools = {
             if (decision.action === "skip") {
                 return JSON.stringify({ success: true, skipped: true, reason: decision.reason, nextRetryAt: decision.nextRetryAt, data: decision.data });
             }
-            const runtime = getHedgehogRuntime();
+            if (isDailyMorningBriefingCompleted(db, decision.data.id)) {
+                return JSON.stringify({ success: true, skipped: true, reason: "already_completed", data: selectDailyMorningBriefing(db, decision.data.id) });
+            }
             if (decision.action === "continue") {
-                await runtime.subagent.run({
-                    sessionKey: decision.data.sessionId,
-                    message: DAILY_MORNING_BRIEFING_CONTINUE_MESSAGE,
-                    deliver: false,
-                    idempotencyKey: decision.idempotencyKey
-                });
+                await scheduleDailyMorningBriefingTurn("continue", decision.data.sessionId, DAILY_MORNING_BRIEFING_CONTINUE_MESSAGE, decision.idempotencyKey);
                 return JSON.stringify({ success: true, skipped: true, reason: "already_generating", action: "continued", data: decision.data });
             }
             try {
-                await runtime.subagent.run({
-                    sessionKey: decision.data.sessionId,
-                    message: DAILY_MORNING_BRIEFING_GENERATION_MESSAGE,
-                    deliver: false,
-                    idempotencyKey: decision.idempotencyKey
-                });
+                await scheduleDailyMorningBriefingTurn("start", decision.data.sessionId, DAILY_MORNING_BRIEFING_GENERATION_MESSAGE, decision.idempotencyKey);
             }
             catch (e) {
                 markDailyMorningBriefingFailed(db, decision.data.id, e instanceof Error ? e.message : String(e));
