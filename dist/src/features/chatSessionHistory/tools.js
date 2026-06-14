@@ -21,6 +21,103 @@ function textFromContent(content) {
         .filter(Boolean)
         .join("");
 }
+function textFromRecordFields(record, fields) {
+    for (const field of fields) {
+        const value = record[field];
+        if (typeof value === "string" && value.trim())
+            return value;
+    }
+    return "";
+}
+function textFromThinkingContent(content) {
+    if (!Array.isArray(content))
+        return "";
+    return content
+        .map((part) => {
+        if (!part || typeof part !== "object")
+            return "";
+        const record = part;
+        const type = typeof record.type === "string" ? record.type : "";
+        if (type !== "thinking" && type !== "reasoning")
+            return "";
+        return textFromRecordFields(record, ["text", "content", "reasoning", "thinking"]);
+    })
+        .filter(Boolean)
+        .join("\n");
+}
+function normalizeProcessText(text) {
+    return text.replace(/\s+/g, " ").trim();
+}
+function processTargetFromEntry(entry) {
+    const params = (entry.arguments || entry.args || entry.input);
+    const direct = textFromRecordFields(entry, ["title", "summary", "meta", "name"]);
+    if (direct)
+        return normalizeProcessText(direct);
+    if (params && typeof params === "object") {
+        return normalizeProcessText(textFromRecordFields(params, ["command", "url", "href", "path", "query", "q"]));
+    }
+    return "";
+}
+function processActionFromEntry(entry) {
+    const haystack = [entry.kind, entry.name, entry.title, entry.summary].filter(Boolean).join(" ").toLowerCase();
+    const params = (entry.arguments || entry.args || entry.input);
+    if (/\bcurl\b|fetch url|https?:\/\/|url/.test(haystack) || typeof params?.url === "string" || typeof params?.href === "string")
+        return "请求接口";
+    if (/\bread\b|读取/.test(haystack) || typeof params?.path === "string")
+        return "读取文件";
+    if (/\bexec\b|command|shell|bash/.test(haystack) || typeof params?.command === "string")
+        return "执行命令";
+    if (/\bpatch\b|apply/.test(haystack))
+        return "修改文件";
+    if (entry.type === "step")
+        return "执行步骤";
+    return "处理信息";
+}
+function processStatusFromEntry(entry) {
+    if (entry.status === "failed" || (typeof entry.exitCode === "number" && entry.exitCode !== 0))
+        return "失败";
+    if (entry.status === "running" || entry.phase === "start")
+        return "进行中";
+    if (entry.status === "completed" || entry.phase === "end" || entry.phase === "finish" || entry.exitCode === 0)
+        return "完成";
+    return typeof entry.status === "string" ? entry.status : "";
+}
+function isToolProcessEntry(entry) {
+    const type = typeof entry.type === "string" ? entry.type : "";
+    return (entry.kind === "tool" ||
+        type === "item_event" ||
+        type === "command_output" ||
+        type === "patch_summary" ||
+        /^tool(?:_|$)/.test(type));
+}
+function extractThinkingText(entry) {
+    const type = typeof entry.type === "string" ? entry.type : "";
+    if (type === "reasoning") {
+        return textFromRecordFields(entry, ["text", "reasoning_content", "reasoning"]);
+    }
+    const wrappedMessage = entry.message && typeof entry.message === "object" && !Array.isArray(entry.message)
+        ? entry.message
+        : entry;
+    const thinking = textFromRecordFields(wrappedMessage, ["thinking", "reasoning", "reasoning_content"]) || textFromThinkingContent(wrappedMessage.content);
+    if (thinking)
+        return thinking;
+    if (!isToolProcessEntry(entry))
+        return "";
+    if (type === "command_output" && typeof entry.output === "string" && !entry.title && !entry.summary && entry.exitCode === undefined && !entry.status) {
+        return "";
+    }
+    const action = processActionFromEntry(entry);
+    const target = processTargetFromEntry(entry);
+    const status = processStatusFromEntry(entry);
+    const subject = target ? `${action}：${target}` : action;
+    return status ? `${subject} / ${status}` : subject;
+}
+function collectThinking(entries) {
+    const lines = entries
+        .map((entry) => extractThinkingText(entry.raw).trim())
+        .filter(Boolean);
+    return lines.join("\n");
+}
 function extractTranscriptMessage(entry, includeRaw) {
     if (!entry || typeof entry !== "object")
         return null;
@@ -32,6 +129,8 @@ function extractTranscriptMessage(entry, includeRaw) {
     if (!role)
         return null;
     const text = textFromContent(message.content) || textFromContent(message.text);
+    if (role === "assistant" && text.trim().length === 0)
+        return null;
     const id = typeof record.id === "string"
         ? record.id
         : typeof message.id === "string"
@@ -102,8 +201,10 @@ function selectInteraction(entries, limit, interactionId) {
         };
     }
     let startIndex = -1;
+    let startEntryIndex = -1;
     if (interactionId) {
         startIndex = messages.findIndex((message) => message.role === "user" && message.id === interactionId);
+        startEntryIndex = entries.findIndex((entry) => entry.message?.role === "user" && entry.message.id === interactionId);
     }
     if (startIndex < 0) {
         for (let index = messages.length - 1; index >= 0; index--) {
@@ -113,12 +214,25 @@ function selectInteraction(entries, limit, interactionId) {
             }
         }
     }
+    if (startEntryIndex < 0) {
+        for (let index = entries.length - 1; index >= 0; index--) {
+            if (entries[index].message?.role === "user") {
+                startEntryIndex = index;
+                break;
+            }
+        }
+    }
     const interaction = startIndex >= 0 ? messages.slice(startIndex) : messages.slice(-1);
+    const interactionEntries = startEntryIndex >= 0 ? entries.slice(startEntryIndex) : entries.slice(-1);
     const lastUserMessage = [...interaction].reverse().find((message) => message.role === "user");
     const lastAssistantMessage = [...interaction].reverse().find((message) => (message.role === "assistant" && message.text.trim().length > 0));
     const hasLifecycleComplete = entries.some((entry) => isTurnCompleteEntry(entry.raw, interactionId || lastUserMessage?.id));
+    const thinking = collectThinking(interactionEntries);
+    const messagesWithThinking = thinking && lastAssistantMessage
+        ? interaction.map((message) => message.id === lastAssistantMessage.id ? { ...message, thinking } : message)
+        : interaction;
     return {
-        messages: interaction.slice(-limit),
+        messages: messagesWithThinking.slice(-limit),
         turnComplete: hasLifecycleComplete || Boolean(lastUserMessage && lastAssistantMessage),
         turnCompleteSource: hasLifecycleComplete ? "lifecycle" : lastUserMessage && lastAssistantMessage ? "messages" : "none",
         lastUserMessageId: lastUserMessage?.id || null,
