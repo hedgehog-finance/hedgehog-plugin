@@ -14,13 +14,11 @@ import type {
 } from "openclaw/plugin-sdk/channel-contract";
 import { getHedgehogRuntime } from "./runtime.js";
 import { logger } from "./core/logger.js";
-import { getDB } from "./core/database.js";
 import type {
 	HedgehogFinanceResolvedAccount,
 	RelayInboundMessage
 } from "./types.js";
 import { allFeaturesTools } from "./features/index.js";
-import { saveStockAiAnalysisRecord } from "./features/stockAnalysis/tools.js";
 
 function getCurrentTimestamp(): number {
 	return Date.now();
@@ -162,91 +160,6 @@ function isReasoningPayload(payload: any, info?: any): boolean {
 	if (info?.isReasoning === true) return true;
 	if (!payload || typeof payload !== "object") return false;
 	return isReasoningReplyPayload(payload);
-}
-
-function parseStockAnalysisRequest(text: string, chatId?: string) {
-	let body: unknown;
-	try {
-		body = JSON.parse(text);
-	} catch {
-		return null;
-	}
-
-	if (!body || typeof body !== "object" || Array.isArray(body)) {
-		return null;
-	}
-
-	const payload = body as Record<string, unknown>;
-	const cwContent = typeof payload.cw_content === "string" ? payload.cw_content.trim() : "";
-
-	let stock_code = "";
-	let stock_name = "";
-
-	// 1. Try parsing cw_context if it exists
-	const cwContext = typeof payload.cw_context === "string" ? payload.cw_context.trim() : "";
-	if (cwContext) {
-		try {
-			const parsedContext = JSON.parse(cwContext);
-			if (parsedContext && typeof parsedContext === "object" && !Array.isArray(parsedContext)) {
-				if ((parsedContext as Record<string, unknown>).saveMode === "tool") return null;
-				stock_code = typeof parsedContext.stock_code === "string" ? parsedContext.stock_code.trim() : "";
-				stock_name = typeof parsedContext.stock_name === "string" ? parsedContext.stock_name.trim() : "";
-			}
-		} catch {
-			// If not a valid JSON string, treat cwContext as the plain stock_code
-			stock_code = cwContext;
-		}
-	}
-
-	// 2. If we found a stock_code but no stock_name, attempt database lookups
-	if (stock_code && !stock_name) {
-		try {
-			const db = getDB();
-			const normalizedCode = stock_code.toUpperCase().replace(/\.SS$/i, ".SH");
-			// Query stock classification cache first
-			let row = db.prepare(`SELECT stock_name FROM stock_classification_cache WHERE stock_code = ? OR stock_code = ? LIMIT 1`)
-				.get(normalizedCode, normalizedCode.replace(/\.SH$/i, "").replace(/\.SZ$/i, "").replace(/\.HK$/i, "")) as { stock_name: string } | undefined;
-			if (!row) {
-				// Fallback to watchlist
-				row = db.prepare(`SELECT stock_name FROM watchlist WHERE stock_code = ? LIMIT 1`)
-					.get(normalizedCode) as { stock_name: string } | undefined;
-			}
-			if (row?.stock_name) {
-				stock_name = row.stock_name;
-			} else {
-				stock_name = stock_code; // fallback to code if name not found in db
-			}
-		} catch {
-			stock_name = stock_code;
-		}
-	}
-
-	// 3. Fallback to legacy cwContent/chatId parsing if no stock_code was found via cw_context
-	if (!stock_code) {
-		if (!cwContent.startsWith("分析一下") || !cwContent.endsWith("股票")) {
-			return null;
-		}
-
-		const chatIdMatch = typeof chatId === "string"
-			? /^stock_analysis_(.+)_\d+$/.exec(chatId)
-			: null;
-		stock_code = typeof payload.cw_stock_code === "string"
-			? payload.cw_stock_code.trim()
-			: chatIdMatch?.[1]?.trim() || "";
-		stock_name = typeof payload.cw_stock_name === "string"
-			? payload.cw_stock_name.trim()
-			: cwContent.replace(/^分析一下/, "").replace(/股票$/, "").trim();
-	}
-
-	const market = typeof payload.cw_market === "string" && payload.cw_market.trim()
-		? payload.cw_market.trim()
-		: "CN";
-
-	if (!stock_code || !stock_name) {
-		return null;
-	}
-
-	return { stock_code, stock_name, market };
 }
 
 async function getJsonlLineCountAsync(agentId: string, sessionId: string): Promise<number> {
@@ -704,42 +617,6 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 						sendEvent("reply", { text: delta, isPartial: true });
 					};
 
-					const stockAnalysisRequest = parseStockAnalysisRequest(text, chatId);
-					let stockAnalysisReplyText = "";
-					let didSaveStockAnalysis = false;
-					const appendStockAnalysisReplyText = (content: string) => {
-						if (!stockAnalysisRequest) return;
-						const visibleContent = extractVisibleReplyText(content);
-						if (!visibleContent) return;
-
-						if (!stockAnalysisReplyText || visibleContent.startsWith(stockAnalysisReplyText)) {
-							stockAnalysisReplyText = visibleContent;
-							return;
-						}
-						if (stockAnalysisReplyText.includes(visibleContent)) return;
-						stockAnalysisReplyText += visibleContent;
-					};
-					const saveStockAnalysisReply = (content: string) => {
-						if (!stockAnalysisRequest || didSaveStockAnalysis) return;
-						appendStockAnalysisReplyText(content);
-						const visibleContent = stockAnalysisReplyText.trim();
-						if (!visibleContent) return;
-
-						try {
-							saveStockAiAnalysisRecord(getDB(), accountId, {
-								...stockAnalysisRequest,
-								sessionId: appPayload.sessionId || appPayload.params?.sessionId || "",
-								content: visibleContent
-							});
-							didSaveStockAnalysis = true;
-						} catch (err: any) {
-							const message = err?.message || "保存股票 AI 分析失败";
-							childLogger.error({ err: message, chatId, stock_code: stockAnalysisRequest.stock_code }, "保存股票 AI 分析失败");
-							sendEvent("error", { error: message });
-							throw err;
-						}
-					};
-
 					const normalizeId = (rawId?: string) => rawId?.replace(/^(command:|tool:|call_)/, '');
 					let hasSentModelEvent = false;
 
@@ -920,9 +797,7 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 											sendReasoningText(payload.text);
 											return;
 										}
-										appendStockAnalysisReplyText(payload.text);
 										if (info.kind === "final") {
-											saveStockAnalysisReply(payload.text);
 											sendEvent("reply", { text: extractVisibleReplyText(payload.text), isFinal: true, replace: true });
 											return;
 										}
@@ -939,7 +814,6 @@ export const hedgehogFinancePlugin: ChannelPlugin<HedgehogFinanceResolvedAccount
 								},
 							}
 						});
-						saveStockAnalysisReply(stockAnalysisReplyText);
 						await sendFinalReplyAndUsage();
 					} finally {
 						delete replyTextStateMap[chatId];

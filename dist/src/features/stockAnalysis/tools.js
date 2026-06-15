@@ -6,9 +6,6 @@ const STOCK_AI_ANALYSIS_SKILL = "hedgehog-stock-research";
 export function normalizeStockCode(stock_code) {
     return stock_code.trim().toUpperCase().replace(/\.SS$/i, ".SH");
 }
-function resolveToolUserId(ctx) {
-    return ctx?.userId || "default";
-}
 function buildStockAiAnalysisContent(args) {
     return [
         `分析一下${args.stock_name}股票`,
@@ -21,14 +18,6 @@ function buildStockAiAnalysisContent(args) {
 function buildStockAiAnalysisMessage(args) {
     const stock_code = normalizeStockCode(args.stock_code);
     const sessionId = args.sessionId || "";
-    const buildGeneratingSaveParams = () => JSON.stringify({
-        stock_code,
-        stock_name: args.stock_name,
-        market: args.market,
-        sessionId,
-        status: "generating",
-        content: ""
-    });
     const buildFinalSaveParams = (status) => JSON.stringify({
         stock_code,
         stock_name: args.stock_name,
@@ -39,23 +28,13 @@ function buildStockAiAnalysisMessage(args) {
     });
     return JSON.stringify({
         cw_system_prompt: [
-            `开始分析前必须先调用 save_stock_ai_analysis，参数为 ${buildGeneratingSaveParams()}；如果返回 skipped=true，必须立即停止，不要继续调用 skill 或生成正文。`,
-            `必须触发并使用 ${STOCK_AI_ANALYSIS_SKILL} skill 生成个股 AI 分析报告。`,
-            `生成成功后必须调用 save_stock_ai_analysis，参数为 ${buildFinalSaveParams("completed")}，content 传最终完整个股分析正文。`,
-            `生成失败后必须调用 save_stock_ai_analysis，参数为 ${buildFinalSaveParams("failed")}，content 存放完整错误信息。`,
+            `第 1 步：必须触发并使用 ${STOCK_AI_ANALYSIS_SKILL} skill 生成个股 AI 分析报告。`,
+            `第 2 步：生成成功后必须调用 save_stock_ai_analysis，参数为 ${buildFinalSaveParams("completed")}，content 传最终完整个股分析正文。`,
+            `失败处理：任一步失败后必须调用 save_stock_ai_analysis，参数为 ${buildFinalSaveParams("failed")}，content 存放完整错误信息。`,
             "如果最终内容包含 [图表数据]，正文必须已经包含所有对应图表占位符。"
         ].join("\n"),
-        cw_context: JSON.stringify({
-            stock_code,
-            stock_name: args.stock_name,
-            market: args.market,
-            sessionId,
-            saveMode: "tool"
-        }),
         cw_market: args.market,
-        cw_stock_code: stock_code,
-        cw_stock_name: args.stock_name,
-        cw_content: buildStockAiAnalysisContent({ ...args, stock_code }),
+        cw_content: '生成个股 AI 分析报告',
         cw_output: [
             `输出结构以 ${STOCK_AI_ANALYSIS_SKILL} skill 的交付模板为准。`,
             '强制启用“本地缓存任务日志”',
@@ -166,7 +145,7 @@ function queryStockAnalysisStocks(db, market, page, pageSize) {
 	`).get(market);
     return { rows, total: countRow.total || 0 };
 }
-export function saveStockAiAnalysisRecord(db, userId, args) {
+export function saveStockAiAnalysisRecord(db, args) {
     const stock_code = normalizeStockCode(args.stock_code);
     const status = args.status || "completed";
     const stock_name = args.stock_name?.trim() || stock_code;
@@ -189,7 +168,7 @@ export function saveStockAiAnalysisRecord(db, userId, args) {
     db.prepare(`
 		INSERT INTO stock_ai_analysis (id, userId, stock_code, stock_name, market, sessionId, status, content)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`).run(id, userId, stock_code, stock_name, args.market, sessionId, status, content);
+	`).run(id, "default", stock_code, stock_name, args.market, sessionId, status, content);
     return db.prepare(`
 		SELECT id, stock_code, stock_name, market, sessionId, status, content, createdAt, updatedAt
 		FROM stock_ai_analysis
@@ -319,10 +298,10 @@ export const stockAnalysisTools = {
     build_stock_ai_analysis_message: {
         name: "build_stock_ai_analysis_message",
         label: "构建个股分析消息",
-        description: "根据股票代码、名称和市场构建用于主动 RPC 发起 Agent 个股 AI 分析任务的标准消息。该工具只返回提示词消息体，不触发定时任务，也不保存分析结果。",
+        description: "发起个股 AI 分析任务，返回 Agent 消息。",
         parameters: BuildStockAiAnalysisMessageAgentToolSchema,
         registerTool: false,
-        async execute(params, ctx) {
+        async execute(params) {
             const args = BuildStockAiAnalysisMessageParamsSchema.parse(params);
             const db = getDB();
             const stock_code = normalizeStockCode(args.stock_code);
@@ -331,38 +310,37 @@ export const stockAnalysisTools = {
                 return JSON.stringify({
                     success: true,
                     skipped: true,
-                    reason: "already_generating",
-                    data: generating
+                    data: {
+                        status: generating.status
+                    }
                 });
             }
+            const preflightSave = saveStockAiAnalysisRecord(db, {
+                stock_code,
+                stock_name: args.stock_name,
+                market: args.market,
+                sessionId: args.sessionId || "",
+                status: "generating",
+                content: ""
+            });
             const message = buildStockAiAnalysisMessage({ ...args, stock_code });
-            const payload = JSON.parse(message);
             return JSON.stringify({
                 success: true,
                 data: {
-                    message,
-                    payload,
-                    stock_code,
-                    saveParams: {
-                        stock_code,
-                        stock_name: args.stock_name,
-                        market: args.market,
-                        sessionId: args.sessionId || ""
-                    },
-                    skill: STOCK_AI_ANALYSIS_SKILL
+                    status: preflightSave.status,
+                    message
                 }
             });
         }
     },
     save_stock_ai_analysis: {
         name: "save_stock_ai_analysis",
-        description: "保存个股 AI 分析结果。生成前必须先以 status=generating、content=\"\" 调用，并传入 stock_code、stock_name、market；生成成功后以 status=completed 保存完整正文 content；生成失败后以 status=failed 保存完整错误信息。",
+        description: "保存个股 AI 分析结果。任务派发工具通常已预先保存 status=generating；Agent 生成成功后以 status=completed 保存完整正文 content，生成失败后以 status=failed 保存完整错误信息。status=generating 仅用于兼容直接预占位调用。",
         parameters: SaveStockAiAnalysisParamsSchema,
         registerTool: true,
-        async execute(params, ctx) {
+        async execute(params) {
             const args = SaveStockAiAnalysisParamsSchema.parse(params);
             const db = getDB();
-            const userId = resolveToolUserId(ctx);
             if (args.status === "generating") {
                 const stock_code = normalizeStockCode(args.stock_code);
                 const generating = selectLatestGeneratingStockAnalysis(db, stock_code, args.market, args.sessionId);
@@ -370,7 +348,7 @@ export const stockAnalysisTools = {
                     return JSON.stringify({ success: true, skipped: true, reason: "already_generating", data: generating });
                 }
             }
-            const data = saveStockAiAnalysisRecord(db, userId, args);
+            const data = saveStockAiAnalysisRecord(db, args);
             return JSON.stringify({ success: true, data });
         }
     },

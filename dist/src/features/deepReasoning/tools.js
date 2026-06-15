@@ -14,13 +14,6 @@ function buildContent(args) {
 }
 function buildDeepReasoningMessage(args) {
     const sessionId = args.sessionId || "";
-    const buildGeneratingSaveParams = () => JSON.stringify({
-        sourceId: args.newsId,
-        sourceTitle: args.sourceTitle,
-        sessionId,
-        status: "generating",
-        content: ""
-    });
     const buildFinalSaveParams = (status) => JSON.stringify({
         sourceId: args.newsId,
         sessionId,
@@ -29,17 +22,10 @@ function buildDeepReasoningMessage(args) {
     });
     return JSON.stringify({
         cw_system_prompt: [
-            `开始分析前必须先调用 save_article_deep_reasoning_analysis，参数为 ${buildGeneratingSaveParams()}；如果返回 skipped=true，必须立即停止，不要继续调用 skill 或生成正文。`,
-            "仅允许按上述标准参数调用 save_article_deep_reasoning_analysis；如果无法提供标准参数，或参数包含标准参数以外的字段，不要调用 save_article_deep_reasoning_analysis。",
-            `必须触发并使用 ${DEEP_REASONING_SKILL} skill 生成新闻事件深度推演报告。`,
-            `生成成功后必须调用 save_article_deep_reasoning_analysis，参数为 ${buildFinalSaveParams("completed")}，content 传最终完整深度推演报告正文。`,
-            `生成失败后必须调用 save_article_deep_reasoning_analysis，参数为 ${buildFinalSaveParams("failed")}，content 存放完整错误信息。`
+            `第 1 步：必须触发并使用 ${DEEP_REASONING_SKILL} skill 生成新闻事件深度推演报告。`,
+            `第 2 步：生成成功后必须调用 save_article_deep_reasoning_analysis，参数为 ${buildFinalSaveParams("completed")}，content 传最终完整深度推演报告正文。`,
+            `失败处理：任一步失败后必须调用 save_article_deep_reasoning_analysis，参数为 ${buildFinalSaveParams("failed")}，content 存放完整错误信息。`
         ].join("\n"),
-        cw_context: JSON.stringify({
-            sourceId: args.newsId,
-            sourceTitle: args.sourceTitle,
-            sessionId
-        }),
         cw_content: buildContent(args),
         cw_output: [
             `输出结构以 ${DEEP_REASONING_SKILL} skill 的交付模板为准。`,
@@ -93,11 +79,13 @@ function selectDeepReasoningForUpdate(sourceId, market, sessionId) {
 		LIMIT 1
 	`).get(sourceId, market);
 }
-function saveDeepReasoningRecord(userId, args) {
+function saveDeepReasoningRecord(args) {
     const db = getDB();
     const id = randomUUID();
     const sessionId = args.sessionId?.trim() || "";
-    const existing = selectDeepReasoningForUpdate(args.sourceId, args.market, sessionId);
+    const existing = args.status === "generating"
+        ? undefined
+        : selectDeepReasoningForUpdate(args.sourceId, args.market, sessionId);
     if (existing) {
         const sourceTitle = args.sourceTitle.trim() || existing.sourceTitle || "";
         db.prepare(`
@@ -118,7 +106,7 @@ function saveDeepReasoningRecord(userId, args) {
     db.prepare(`
 		INSERT INTO news_deep_reasoning_analysis (id, sourceId, sourceTitle, userId, market, sessionId, status, content)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`).run(id, args.sourceId, args.sourceTitle, userId, args.market, sessionId, args.status, args.content);
+	`).run(id, args.sourceId, args.sourceTitle, "default", args.market, sessionId, args.status, args.content);
     return db.prepare(`
 		SELECT id, sourceId, 'deduction' AS analysisType, sourceTitle, market, sessionId, status, content, createdAt, updatedAt
 		FROM news_deep_reasoning_analysis
@@ -209,53 +197,53 @@ export const deepReasoningTools = {
     build_deep_reasoning_message: {
         name: "build_deep_reasoning_message",
         label: "构建深度推演消息",
-        description: "根据新闻 ID、标题和正文构建用于主动 RPC 发起 Agent 新闻深度推演任务的标准消息。该工具只返回提示词消息体，不触发定时任务，也不保存分析结果。",
+        description: "发起深度推演任务，返回 Agent 消息。",
         parameters: BuildDeepReasoningMessageAgentToolSchema,
         registerTool: false,
-        async execute(params, ctx) {
+        async execute(params) {
             const args = BuildDeepReasoningMessageParamsSchema.parse(params);
             const generating = selectGeneratingDeepReasoning(args.newsId, "CN", args.sessionId);
             if (generating) {
                 return JSON.stringify({
                     success: true,
                     skipped: true,
-                    reason: "already_generating",
-                    data: generating
+                    data: {
+                        status: generating.status
+                    }
                 });
             }
+            const preflightSave = saveDeepReasoningRecord({
+                sourceId: args.newsId,
+                sourceTitle: args.sourceTitle,
+                market: "CN",
+                sessionId: args.sessionId || "",
+                status: "generating",
+                content: ""
+            });
             const message = buildDeepReasoningMessage(args);
-            const payload = JSON.parse(message);
             return JSON.stringify({
                 success: true,
                 data: {
-                    message,
-                    payload,
-                    sourceId: args.newsId,
-                    saveParams: {
-                        sourceId: args.newsId,
-                        sourceTitle: args.sourceTitle,
-                        sessionId: args.sessionId || ""
-                    },
-                    skill: DEEP_REASONING_SKILL
+                    status: preflightSave.status,
+                    message
                 }
             });
         }
     },
     save_article_deep_reasoning_analysis: {
         name: "save_article_deep_reasoning_analysis",
-        description: "保存新闻深度推演结果。生成前必须先以 status=generating、content=\"\" 调用，并传入 sourceId、sourceTitle、sourceContent、market；生成成功后以 status=completed 保存完整正文 content；生成失败后以 status=failed 保存完整错误信息。",
+        description: "保存新闻深度推演结果。任务派发工具通常已预先保存 status=generating；Agent 生成成功后以 status=completed 保存完整正文 content，生成失败后以 status=failed 保存完整错误信息。status=generating 仅用于兼容直接预占位调用。",
         parameters: SaveDeepReasoningParamsSchema,
         registerTool: true,
-        async execute(params, ctx) {
+        async execute(params) {
             const args = SaveDeepReasoningParamsSchema.parse(params);
-            const userId = ctx?.userId || "default";
             if (args.status === "generating") {
                 const generating = selectGeneratingDeepReasoning(args.sourceId, args.market, args.sessionId);
                 if (generating) {
                     return JSON.stringify({ success: true, skipped: true, reason: "already_generating", data: generating });
                 }
             }
-            const data = saveDeepReasoningRecord(userId, args);
+            const data = saveDeepReasoningRecord(args);
             return JSON.stringify({ success: true, data });
         }
     }

@@ -28,13 +28,6 @@ function buildContent(args: BuildInformationVerificationMessageParams): string {
 
 function buildInformationVerificationMessage(args: BuildInformationVerificationMessageParams): string {
 	const sessionId = args.sessionId || "";
-	const buildGeneratingSaveParams = () => JSON.stringify({
-		sourceId: args.newsId,
-		sourceTitle: args.sourceTitle,
-		sessionId,
-		status: "generating",
-		content: ""
-	});
 	const buildFinalSaveParams = (status: "completed" | "failed") => JSON.stringify({
 		sourceId: args.newsId,
 		sessionId,
@@ -43,17 +36,10 @@ function buildInformationVerificationMessage(args: BuildInformationVerificationM
 	});
 	return JSON.stringify({
 		cw_system_prompt: [
-			`开始分析前必须先调用 save_information_verification，参数为 ${buildGeneratingSaveParams()}；如果返回 skipped=true，必须立即停止，不要继续调用 skill 或生成正文。`,
-			`必须触发并使用 ${INFORMATION_VERIFICATION_SKILL} skill 生成信息求证与置信度审计报告。`,
-			`生成成功后必须调用 save_information_verification，参数为 ${buildFinalSaveParams("completed")}，content 传最终完整求证报告正文。`,
-			`生成失败后必须调用 save_information_verification，参数为 ${buildFinalSaveParams("failed")}，content 存放完整错误信息。`
+			`第 1 步：必须触发并使用 ${INFORMATION_VERIFICATION_SKILL} skill 生成信息求证与置信度审计报告。`,
+			`第 2 步：生成成功后必须调用 save_information_verification，参数为 ${buildFinalSaveParams("completed")}，content 传最终完整求证报告正文。`,
+			`失败处理：任一步失败后必须调用 save_information_verification，参数为 ${buildFinalSaveParams("failed")}，content 存放完整错误信息。`
 		].join("\n"),
-		cw_context: JSON.stringify({
-			sourceId: args.newsId,
-			sourceTitle: args.sourceTitle,
-			publishTime: args.publishTime,
-			sessionId
-		}),
 		cw_content: buildContent(args),
 		cw_output: [
 			`输出结构以 ${INFORMATION_VERIFICATION_SKILL} skill 的交付模板为准。`,
@@ -111,7 +97,6 @@ function selectInformationVerificationForUpdate(sourceId: string, sessionId: str
 }
 
 function saveInformationVerificationRecord(
-	userId: string,
 	args: {
 		sourceId: string;
 		sourceTitle: string;
@@ -123,7 +108,9 @@ function saveInformationVerificationRecord(
 	const db = getDB();
 	const id = randomUUID();
 	const sessionId = args.sessionId?.trim() || "";
-	const existing = selectInformationVerificationForUpdate(args.sourceId, sessionId);
+	const existing = args.status === "generating"
+		? undefined
+		: selectInformationVerificationForUpdate(args.sourceId, sessionId);
 
 	if (existing) {
 		const sourceTitle = args.sourceTitle.trim() || existing.sourceTitle || "";
@@ -147,7 +134,7 @@ function saveInformationVerificationRecord(
 	db.prepare(`
 		INSERT INTO news_fact_check_analysis (id, sourceId, sourceTitle, userId, sessionId, status, content)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`).run(id, args.sourceId, args.sourceTitle, userId, sessionId, args.status, args.content);
+	`).run(id, args.sourceId, args.sourceTitle, "default", sessionId, args.status, args.content);
 
 	return db.prepare(`
 		SELECT id, sourceId, 'verification' AS analysisType, sourceTitle, sessionId, status, content, createdAt, updatedAt
@@ -240,53 +227,52 @@ export const informationVerificationTools: Record<string, RuntimeTool> = {
 	build_information_verification_message: {
 		name: "build_information_verification_message",
 		label: "构建信息求证消息",
-		description: "根据新闻 ID、标题和正文构建用于主动 RPC 发起 Agent 信息求证任务的标准消息。该工具只返回提示词消息体，不触发定时任务，也不保存分析结果。",
+		description: "发起信息求证任务，返回 Agent 消息。",
 		parameters: BuildInformationVerificationMessageAgentToolSchema,
 		registerTool: false,
-		async execute(params, ctx) {
+		async execute(params) {
 			const args = BuildInformationVerificationMessageParamsSchema.parse(params);
 			const generating = selectGeneratingInformationVerification(args.newsId, args.sessionId);
 			if (generating) {
 				return JSON.stringify({
 					success: true,
 					skipped: true,
-					reason: "already_generating",
-					data: generating
+					data: {
+						status: (generating as { status: string }).status
+					}
 				});
 			}
+			const preflightSave = saveInformationVerificationRecord({
+				sourceId: args.newsId,
+				sourceTitle: args.sourceTitle,
+				sessionId: args.sessionId || "",
+				status: "generating",
+				content: ""
+			});
 			const message = buildInformationVerificationMessage(args);
-			const payload = JSON.parse(message);
 			return JSON.stringify({
 				success: true,
 				data: {
-					message,
-					payload,
-					sourceId: args.newsId,
-					saveParams: {
-						sourceId: args.newsId,
-						sourceTitle: args.sourceTitle,
-						sessionId: args.sessionId || ""
-					},
-					skill: INFORMATION_VERIFICATION_SKILL
+					status: (preflightSave as { status: string }).status,
+					message
 				}
 			});
 		}
 	},
 	save_information_verification: {
 		name: "save_information_verification",
-		description: "保存新闻信息求证结果。生成前必须先以 status=generating、content=\"\" 调用，并传入 sourceId、sourceTitle；生成成功后以 status=completed 保存完整正文 content；生成失败后以 status=failed 保存完整错误信息。",
+		description: "保存新闻信息求证结果。任务派发工具通常已预先保存 status=generating；Agent 生成成功后以 status=completed 保存完整正文 content，生成失败后以 status=failed 保存完整错误信息。status=generating 仅用于兼容直接预占位调用。",
 		parameters: SaveInformationVerificationParamsSchema,
 		registerTool: true,
-		async execute(params, ctx) {
+		async execute(params) {
 			const args = SaveInformationVerificationParamsSchema.parse(params);
-			const userId = ctx?.userId || "default";
 			if (args.status === "generating") {
 				const generating = selectGeneratingInformationVerification(args.sourceId, args.sessionId);
 				if (generating) {
 					return JSON.stringify({ success: true, skipped: true, reason: "already_generating", data: generating });
 				}
 			}
-			const data = saveInformationVerificationRecord(userId, args);
+			const data = saveInformationVerificationRecord(args);
 			return JSON.stringify({ success: true, data });
 		}
 	}

@@ -1,7 +1,7 @@
 import { getDB } from "../../core/database.js";
 import { RuntimeTool, StockAiAnalysis } from "./schema.js";
 export declare function normalizeStockCode(stock_code: string): string;
-export declare function saveStockAiAnalysisRecord(db: ReturnType<typeof getDB>, userId: string, args: {
+export declare function saveStockAiAnalysisRecord(db: ReturnType<typeof getDB>, args: {
     stock_code: string;
     stock_name?: string;
     market: string;
