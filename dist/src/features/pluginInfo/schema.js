@@ -22,5 +22,29 @@ export const UpdateSkillVersionsParamsSchema = z.preprocess(parseJsonString, z.o
 })).refine(params => Boolean(params.versions || params.skills), {
     message: "versions or skills is required"
 });
+export const UpdateSkillVersionsAgentToolSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        versions: {
+            type: "object",
+            additionalProperties: { type: "string" },
+            description: "skill 版本映射，key 为 skill 名称，value 为版本号"
+        },
+        skills: {
+            type: "array",
+            description: "skill 版本列表",
+            items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["name", "version"],
+                properties: {
+                    name: { type: "string", description: "skill 名称" },
+                    version: { type: "string", description: "skill 版本号" }
+                }
+            }
+        }
+    }
+};
 export const BuildUpdateSkillVersionsMessageParamsSchema = UpdateSkillVersionsParamsSchema;
 //# sourceMappingURL=schema.js.map

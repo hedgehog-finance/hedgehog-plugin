@@ -39,6 +39,38 @@ export declare const UpdateSkillVersionsParamsSchema: z.ZodEffects<z.ZodEffects<
     }[] | undefined;
 }, unknown>;
 export type UpdateSkillVersionsParams = z.infer<typeof UpdateSkillVersionsParamsSchema>;
+export declare const UpdateSkillVersionsAgentToolSchema: {
+    type: string;
+    additionalProperties: boolean;
+    properties: {
+        versions: {
+            type: string;
+            additionalProperties: {
+                type: string;
+            };
+            description: string;
+        };
+        skills: {
+            type: string;
+            description: string;
+            items: {
+                type: string;
+                additionalProperties: boolean;
+                required: string[];
+                properties: {
+                    name: {
+                        type: string;
+                        description: string;
+                    };
+                    version: {
+                        type: string;
+                        description: string;
+                    };
+                };
+            };
+        };
+    };
+};
 export declare const BuildUpdateSkillVersionsMessageParamsSchema: z.ZodEffects<z.ZodEffects<z.ZodObject<{
     versions: z.ZodOptional<z.ZodEffects<z.ZodRecord<z.ZodString, z.ZodString>, Record<string, string>, unknown>>;
     skills: z.ZodOptional<z.ZodEffects<z.ZodArray<z.ZodObject<{

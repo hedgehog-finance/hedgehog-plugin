@@ -9,6 +9,7 @@ import {
 	GetPluginVersionParamsSchema,
 	GetSkillVersionsParamsSchema,
 	RuntimeTool,
+	UpdateSkillVersionsAgentToolSchema,
 	UpdateSkillVersionsParams,
 	UpdateSkillVersionsParamsSchema
 } from "./schema.js";
@@ -221,7 +222,7 @@ export const pluginInfoTools: Record<string, RuntimeTool> = {
 	update_hedgehog_skill_versions: {
 		name: "update_hedgehog_skill_versions",
 		description: "更新数据库中记录的 skill 版本号",
-		parameters: UpdateSkillVersionsParamsSchema,
+		parameters: UpdateSkillVersionsAgentToolSchema,
 		registerTool: false,
 		agentToolTarget: "main",
 		async execute(params: unknown) {

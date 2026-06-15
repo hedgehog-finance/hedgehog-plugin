@@ -3,7 +3,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getDB } from "../../core/database.js";
 import { getWorkspaceDir } from "../../runtime.js";
-import { BuildUpdateSkillVersionsMessageParamsSchema, GetPluginVersionParamsSchema, GetSkillVersionsParamsSchema, UpdateSkillVersionsParamsSchema } from "./schema.js";
+import { BuildUpdateSkillVersionsMessageParamsSchema, GetPluginVersionParamsSchema, GetSkillVersionsParamsSchema, UpdateSkillVersionsAgentToolSchema, UpdateSkillVersionsParamsSchema } from "./schema.js";
 const UPDATE_SKILL_VERSIONS_TOOL_NAME = "update_hedgehog_skill_versions";
 const HEDGEHOG_INIT_SKILL_NAME = "hedgehog-init";
 let cachedPluginVersion = null;
@@ -192,7 +192,7 @@ export const pluginInfoTools = {
     update_hedgehog_skill_versions: {
         name: "update_hedgehog_skill_versions",
         description: "更新数据库中记录的 skill 版本号",
-        parameters: UpdateSkillVersionsParamsSchema,
+        parameters: UpdateSkillVersionsAgentToolSchema,
         registerTool: false,
         agentToolTarget: "main",
         async execute(params) {

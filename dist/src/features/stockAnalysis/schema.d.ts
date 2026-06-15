@@ -162,6 +162,38 @@ export declare const SaveStockAiAnalysisParamsSchema: z.ZodEffects<z.ZodEffects<
     content?: string | undefined;
 }>;
 export type SaveStockAiAnalysisParams = z.infer<typeof SaveStockAiAnalysisParamsSchema>;
+export declare const SaveStockAiAnalysisAgentToolSchema: {
+    type: string;
+    additionalProperties: boolean;
+    required: string[];
+    properties: {
+        stock_code: {
+            type: string;
+            description: string;
+        };
+        stock_name: {
+            type: string;
+            description: string;
+        };
+        market: {
+            type: string;
+            description: string;
+        };
+        sessionId: {
+            type: string;
+            description: string;
+        };
+        content: {
+            type: string;
+            description: string;
+        };
+        status: {
+            type: string;
+            enum: string[];
+            description: string;
+        };
+    };
+};
 export interface StockAiAnalysis {
     id: string;
     stock_code: string;

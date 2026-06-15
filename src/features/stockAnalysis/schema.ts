@@ -83,6 +83,20 @@ export const SaveStockAiAnalysisParamsSchema = z.object({
 });
 export type SaveStockAiAnalysisParams = z.infer<typeof SaveStockAiAnalysisParamsSchema>;
 
+export const SaveStockAiAnalysisAgentToolSchema = {
+	type: "object",
+	additionalProperties: false,
+	required: ["stock_code"],
+	properties: {
+		stock_code: { type: "string", description: "股票代码" },
+		stock_name: { type: "string", description: "股票名称；status=generating 时必须提供" },
+		market: { type: "string", description: "市场类型，默认 CN" },
+		sessionId: { type: "string", description: "前端生成的会话 ID" },
+		content: { type: "string", description: "AI 分析内容；status=generating 时为空，status=failed 时存入错误信息" },
+		status: { type: "string", enum: ["generating", "completed", "failed"], description: "保存状态：generating 表示生成中，completed 表示生成成功，failed 表示生成失败" }
+	}
+};
+
 export interface StockAiAnalysis {
 	id: string;
 	stock_code: string;

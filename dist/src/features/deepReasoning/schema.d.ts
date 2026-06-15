@@ -140,3 +140,35 @@ export declare const SaveDeepReasoningParamsSchema: z.ZodEffects<z.ZodEffects<z.
     content?: string | undefined;
 }>;
 export type SaveDeepReasoningParams = z.infer<typeof SaveDeepReasoningParamsSchema>;
+export declare const SaveDeepReasoningAgentToolSchema: {
+    type: string;
+    additionalProperties: boolean;
+    required: string[];
+    properties: {
+        sourceId: {
+            type: string;
+            description: string;
+        };
+        sourceTitle: {
+            type: string;
+            description: string;
+        };
+        market: {
+            type: string;
+            description: string;
+        };
+        sessionId: {
+            type: string;
+            description: string;
+        };
+        content: {
+            type: string;
+            description: string;
+        };
+        status: {
+            type: string;
+            enum: string[];
+            description: string;
+        };
+    };
+};

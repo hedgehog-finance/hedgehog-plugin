@@ -140,3 +140,31 @@ export declare const SaveInformationVerificationParamsSchema: z.ZodEffects<z.Zod
     content?: string | undefined;
 }>;
 export type SaveInformationVerificationParams = z.infer<typeof SaveInformationVerificationParamsSchema>;
+export declare const SaveInformationVerificationAgentToolSchema: {
+    type: string;
+    additionalProperties: boolean;
+    required: string[];
+    properties: {
+        sourceId: {
+            type: string;
+            description: string;
+        };
+        sourceTitle: {
+            type: string;
+            description: string;
+        };
+        sessionId: {
+            type: string;
+            description: string;
+        };
+        content: {
+            type: string;
+            description: string;
+        };
+        status: {
+            type: string;
+            enum: string[];
+            description: string;
+        };
+    };
+};

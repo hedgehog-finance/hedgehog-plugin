@@ -14,6 +14,7 @@ import {
 	QueryStockAiAnalysisStocksParamsSchema,
 	QueryStockAiAnalysisHistoryParamsSchema,
 	RuntimeTool,
+	SaveStockAiAnalysisAgentToolSchema,
 	SaveStockAiAnalysisParamsSchema,
 	StockAiAnalysis,
 	StockAiAnalysisStockSummary,
@@ -417,7 +418,7 @@ export const stockAnalysisTools: Record<string, RuntimeTool> = {
 		name: "save_stock_ai_analysis",
 		description:
 			"保存个股 AI 分析结果。任务派发工具通常已预先保存 status=generating；Agent 生成成功后以 status=completed 保存完整正文 content，生成失败后以 status=failed 保存完整错误信息。status=generating 仅用于兼容直接预占位调用。",
-		parameters: SaveStockAiAnalysisParamsSchema,
+		parameters: SaveStockAiAnalysisAgentToolSchema,
 		registerTool: true,
 		async execute(params) {
 			const args = SaveStockAiAnalysisParamsSchema.parse(params);

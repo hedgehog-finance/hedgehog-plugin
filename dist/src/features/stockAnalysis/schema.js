@@ -59,6 +59,19 @@ export const SaveStockAiAnalysisParamsSchema = z.object({
 }, {
     message: "generating 状态必须提供 stock_name"
 });
+export const SaveStockAiAnalysisAgentToolSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["stock_code"],
+    properties: {
+        stock_code: { type: "string", description: "股票代码" },
+        stock_name: { type: "string", description: "股票名称；status=generating 时必须提供" },
+        market: { type: "string", description: "市场类型，默认 CN" },
+        sessionId: { type: "string", description: "前端生成的会话 ID" },
+        content: { type: "string", description: "AI 分析内容；status=generating 时为空，status=failed 时存入错误信息" },
+        status: { type: "string", enum: ["generating", "completed", "failed"], description: "保存状态：generating 表示生成中，completed 表示生成成功，failed 表示生成失败" }
+    }
+};
 export const ArticleAiAnalysisKindSchema = z.enum(["verification", "deduction"]);
 export const GetArticleAiAnalysisParamsSchema = z.object({
     sourceId: z.string().trim().min(1).describe("文章来源 ID，例如 news-5、report-5、announce-5"),

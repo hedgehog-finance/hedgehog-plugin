@@ -70,3 +70,17 @@ export const SaveDeepReasoningParamsSchema = z.object({
 	message: "generating 状态必须提供 sourceTitle"
 });
 export type SaveDeepReasoningParams = z.infer<typeof SaveDeepReasoningParamsSchema>;
+
+export const SaveDeepReasoningAgentToolSchema = {
+	type: "object",
+	additionalProperties: false,
+	required: ["sourceId"],
+	properties: {
+		sourceId: { type: "string", description: "新闻来源 ID，例如 news-5" },
+		sourceTitle: { type: "string", description: "新闻标题；status=generating 时必须提供" },
+		market: { type: "string", description: "市场类型，默认 CN" },
+		sessionId: { type: "string", description: "前端生成的会话 ID" },
+		content: { type: "string", description: "AI 分析内容；status=generating 时为空，status=failed 时存入错误信息" },
+		status: { type: "string", enum: ["generating", "completed", "failed"], description: "保存状态：generating 表示生成中，completed 表示生成成功，failed 表示生成失败" }
+	}
+};
