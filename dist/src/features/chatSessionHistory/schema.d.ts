@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { PluginRuntime } from "openclaw/plugin-sdk/channel-core";
 export declare const QueryChatSessionHistoryParamsSchema: z.ZodObject<{
     sessionId: z.ZodString;
     interactionId: z.ZodOptional<z.ZodString>;
@@ -22,3 +23,32 @@ export declare const QueryChatSessionHistoryParamsSchema: z.ZodObject<{
     includeRaw?: boolean | undefined;
 }>;
 export type QueryChatSessionHistoryParams = z.infer<typeof QueryChatSessionHistoryParamsSchema>;
+export interface RuntimeTool {
+    name: string;
+    description: string;
+    parameters: unknown;
+    registerTool?: boolean;
+    execute(params: unknown, ctx?: {
+        userId?: string;
+        runtime?: PluginRuntime;
+    }): Promise<string>;
+}
+export type TranscriptMessage = {
+    id: string;
+    role: "user" | "assistant" | "tool" | string;
+    text: string;
+    thinking?: string;
+    timestamp?: number | string;
+    raw?: unknown;
+};
+export type SelectedInteraction = {
+    messages: TranscriptMessage[];
+    turnComplete: boolean;
+    turnCompleteSource: "lifecycle" | "messages" | "none";
+    lastUserMessageId: string | null;
+    lastAssistantMessageId: string | null;
+};
+export type TranscriptEntry = {
+    message: TranscriptMessage | null;
+    raw: Record<string, unknown>;
+};

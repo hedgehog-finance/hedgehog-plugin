@@ -2,7 +2,7 @@ import { getDB } from "../../core/database.js";
 import { scheduleDailyMorningBriefingTurnCron } from "../../dailyMorningBriefingCron.js";
 import { HEDGEHOG_AGENT_ID } from "../../openclawConstants.js";
 import { CHART_OUTPUT_GUIDANCE, ensureChartPlaceholdersInBody } from "../chartOutput.js";
-import { GetDailyMorningBriefingDetailParamsSchema, QueryDailyMorningBriefingsParamsSchema, SaveDailyMorningBriefingParamsSchema } from "./schema.js";
+import { DispatchDailyMorningBriefingAgentToolSchema, GetDailyMorningBriefingDetailParamsSchema, QueryDailyMorningBriefingsParamsSchema, SaveDailyMorningBriefingAgentToolSchema, SaveDailyMorningBriefingParamsSchema } from "./schema.js";
 const DAILY_MORNING_BRIEFING_MARKET = "CN";
 const DAILY_MORNING_BRIEFING_START_HOUR = 7;
 const DAILY_MORNING_BRIEFING_START_MINUTE = 30;
@@ -14,20 +14,6 @@ const DAILY_MORNING_BRIEFING_FAILED_RETRY_COOLDOWNS_MS = [
     30 * 60 * 1000,
     60 * 60 * 1000
 ];
-const SaveDailyMorningBriefingAgentToolSchema = {
-    type: "object",
-    additionalProperties: false,
-    properties: {
-        id: { type: "string", description: "每日盘前早报 ID；开始生成时不传，后续更新生成结果时必须传入开始时返回的 id" },
-        content: { type: "string", description: "每日盘前早报正文；status=generating 时为空，status=failed 时存入错误信息" },
-        status: { type: "string", enum: ["generating", "completed", "failed"], description: "保存状态：generating 表示开始生成，completed 表示生成成功，failed 表示生成失败" }
-    }
-};
-const DispatchDailyMorningBriefingAgentToolSchema = {
-    type: "object",
-    additionalProperties: false,
-    properties: {}
-};
 const DAILY_MORNING_BRIEFING_GENERATION_MESSAGE = JSON.stringify({
     cw_system_prompt: [
         "开始分析前必须先调用 save_daily_morning_briefing，参数为 {\"status\":\"generating\",\"content\":\"\"}；如果返回 skipped=true，必须立即停止，不要继续调用 skill 或生成正文。",
@@ -40,6 +26,7 @@ const DAILY_MORNING_BRIEFING_GENERATION_MESSAGE = JSON.stringify({
     cw_content: "生成每日早报",
     cw_output: [
         `输出结构以 ${DAILY_MORNING_BRIEFING_SKILL} skill 的交付模板为准。`,
+        '强制启用“本地缓存任务日志”',
         CHART_OUTPUT_GUIDANCE
     ].join("\n")
 });

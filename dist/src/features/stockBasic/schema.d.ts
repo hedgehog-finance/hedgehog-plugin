@@ -147,3 +147,24 @@ export declare const GetStockBasicInfoParamsSchema: z.ZodObject<{
     stock_code: string;
 }>;
 export type GetStockBasicInfoParams = z.infer<typeof GetStockBasicInfoParamsSchema>;
+export declare const GetStockBasicInfoAgentToolSchema: {
+    type: string;
+    additionalProperties: boolean;
+    required: string[];
+    properties: {
+        stock_code: {
+            type: string;
+            description: string;
+        };
+    };
+};
+export interface RuntimeTool {
+    name: string;
+    label?: string;
+    description: string;
+    parameters: unknown;
+    registerTool?: boolean;
+    execute(params: unknown, ctx?: {
+        userId: string;
+    }): Promise<string>;
+}

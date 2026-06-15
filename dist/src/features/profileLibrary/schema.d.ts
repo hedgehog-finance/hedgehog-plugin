@@ -55,3 +55,12 @@ export interface ProfileLibraryRow {
     id: string;
     title: string;
 }
+export interface RuntimeTool {
+    name: string;
+    description: string;
+    parameters: unknown;
+    registerTool?: boolean;
+    execute(params: unknown, ctx: {
+        userId: string;
+    }): Promise<string>;
+}

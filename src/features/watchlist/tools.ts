@@ -13,7 +13,9 @@ import {
 	UpdateWatchlistItemSchema,
 	WatchlistRow,
 	CategoryRow,
+	GetIndustryListAgentToolSchema,
 	GetWatchlistParams,
+	GetWatchlistAgentToolSchema,
 	GetWatchlistParamsSchema,
 	SyncCategoriesParams,
 	SyncCategoriesParamsSchema,
@@ -24,23 +26,6 @@ import {
 } from "./schema.js";
 
 let watchlistMutationQueue: Promise<void> = Promise.resolve();
-
-const GetWatchlistAgentToolSchema = {
-	type: "object",
-	additionalProperties: false,
-	properties: {
-		categoryId: { type: "string", description: "分类 ID，不传返回所有" },
-		categoryType: { type: "string", enum: ["industry", "theme"], description: "分类类型" }
-	}
-};
-
-const GetIndustryListAgentToolSchema = {
-	type: "object",
-	additionalProperties: false,
-	properties: {
-		type: { type: "string", enum: ["industry", "theme", ""], description: "分类类型：industry 行业，theme 主题，空字符串或不传表示全部" }
-	}
-};
 
 function enqueueWatchlistMutation<T>(task: () => Promise<T>): Promise<T> {
 	const previous = watchlistMutationQueue;

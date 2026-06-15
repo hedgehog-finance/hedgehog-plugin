@@ -1,13 +1,5 @@
 import { getDB } from "../../core/database.js";
-import { GetStockBasicListParamsSchema, GetStockBasicInfoParamsSchema, SyncStockBasicParamsSchema } from "./schema.js";
-const GetStockBasicInfoAgentToolSchema = {
-    type: "object",
-    additionalProperties: false,
-    required: ["stock_code"],
-    properties: {
-        stock_code: { type: "string", description: "股票代码，例如：000001.SZ 或 600000.SH" }
-    }
-};
+import { GetStockBasicListParamsSchema, GetStockBasicInfoAgentToolSchema, GetStockBasicInfoParamsSchema, SyncStockBasicParamsSchema } from "./schema.js";
 function normalizeStockBasic(stock) {
     return {
         ...stock,

@@ -10,6 +10,27 @@ export const BuildDeepReasoningMessageParamsSchema = z.object({
 });
 export type BuildDeepReasoningMessageParams = z.infer<typeof BuildDeepReasoningMessageParamsSchema>;
 
+export const BuildDeepReasoningMessageAgentToolSchema = {
+	type: "object",
+	additionalProperties: false,
+	required: ["newsId", "sourceTitle", "sourceContent"],
+	properties: {
+		newsId: { type: "string", description: "新闻 ID，例如 news-5" },
+		sourceTitle: { type: "string", description: "新闻标题" },
+		sourceContent: { type: "string", description: "新闻正文" },
+		sessionId: { type: "string", description: "前端生成的会话 ID" }
+	}
+};
+
+export interface RuntimeTool {
+	name: string;
+	label?: string;
+	description: string;
+	parameters: unknown;
+	registerTool?: boolean;
+	execute(params: unknown, ctx?: { userId: string }): Promise<string>;
+}
+
 export const QueryDeepReasoningHistoryParamsSchema = z.object({
 	page: z.number().int().min(1).default(1).describe("页码"),
 	pageSize: z.number().int().min(1).max(50).default(10).describe("每页数量，默认 10")

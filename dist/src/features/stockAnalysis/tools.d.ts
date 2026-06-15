@@ -1,15 +1,5 @@
 import { getDB } from "../../core/database.js";
-import { StockAiAnalysis } from "./schema.js";
-interface RuntimeTool {
-    name: string;
-    label?: string;
-    description: string;
-    parameters: unknown;
-    registerTool?: boolean;
-    execute(params: unknown, ctx?: {
-        userId: string;
-    }): Promise<string>;
-}
+import { RuntimeTool, StockAiAnalysis } from "./schema.js";
 export declare function normalizeStockCode(stock_code: string): string;
 export declare function saveStockAiAnalysisRecord(db: ReturnType<typeof getDB>, userId: string, args: {
     stock_code: string;
@@ -20,4 +10,3 @@ export declare function saveStockAiAnalysisRecord(db: ReturnType<typeof getDB>, 
     status?: string;
 }): StockAiAnalysis;
 export declare const stockAnalysisTools: Record<string, RuntimeTool>;
-export {};

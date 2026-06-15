@@ -2,35 +2,16 @@ import { randomUUID } from "node:crypto";
 import { getDB } from "../../core/database.js";
 import {
 	BuildDeepReasoningMessageParams,
+	BuildDeepReasoningMessageAgentToolSchema,
 	BuildDeepReasoningMessageParamsSchema,
 	GetDeepReasoningDetailBySessionParamsSchema,
 	GetDeepReasoningDetailParamsSchema,
 	QueryDeepReasoningHistoryParamsSchema,
+	RuntimeTool,
 	SaveDeepReasoningParamsSchema
 } from "./schema.js";
 
-interface RuntimeTool {
-	name: string;
-	label?: string;
-	description: string;
-	parameters: unknown;
-	registerTool?: boolean;
-	execute(params: unknown, ctx?: { userId: string }): Promise<string>;
-}
-
 const DEEP_REASONING_SKILL = "hedgehog-news-deep-reasoning";
-
-const BuildDeepReasoningMessageAgentToolSchema = {
-	type: "object",
-	additionalProperties: false,
-	required: ["newsId", "sourceTitle", "sourceContent"],
-	properties: {
-		newsId: { type: "string", description: "新闻 ID，例如 news-5" },
-		sourceTitle: { type: "string", description: "新闻标题" },
-		sourceContent: { type: "string", description: "新闻正文" },
-		sessionId: { type: "string", description: "前端生成的会话 ID" }
-	}
-};
 
 function buildContent(args: BuildDeepReasoningMessageParams): string {
 	return [

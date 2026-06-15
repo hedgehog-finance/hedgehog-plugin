@@ -31,3 +31,21 @@ export const GetStockBasicInfoParamsSchema = z.object({
 	stock_code: z.string().trim().min(1).describe("股票代码")
 });
 export type GetStockBasicInfoParams = z.infer<typeof GetStockBasicInfoParamsSchema>;
+
+export const GetStockBasicInfoAgentToolSchema = {
+	type: "object",
+	additionalProperties: false,
+	required: ["stock_code"],
+	properties: {
+		stock_code: { type: "string", description: "股票代码，例如：000001.SZ 或 600000.SH" }
+	}
+};
+
+export interface RuntimeTool {
+	name: string;
+	label?: string;
+	description: string;
+	parameters: unknown;
+	registerTool?: boolean;
+	execute(params: unknown, ctx?: { userId: string }): Promise<string>;
+}

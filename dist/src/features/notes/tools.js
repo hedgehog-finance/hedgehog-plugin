@@ -1,14 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { getDB } from "../../core/database.js";
-import { AddStockNoteParamsSchema, DeleteStockNoteParamsSchema, GetStockNoteByIdParamsSchema, QueryStockNotesParamsSchema, UpdateStockNoteParamsSchema, GetStockNoteParamsSchema } from "./schema.js";
-const GetStockNoteAgentToolSchema = {
-    type: "object",
-    additionalProperties: false,
-    required: ["stock_code"],
-    properties: {
-        stock_code: { type: "string", description: "股票代码，例如：000001.SZ 或 600000.SH" }
-    }
-};
+import { AddStockNoteParamsSchema, DeleteStockNoteParamsSchema, GetStockNoteByIdParamsSchema, QueryStockNotesParamsSchema, UpdateStockNoteParamsSchema, GetStockNoteAgentToolSchema, GetStockNoteParamsSchema } from "./schema.js";
 function escapeLikePattern(value) {
     return value.replace(/[\\%_]/g, (char) => `\\${char}`);
 }

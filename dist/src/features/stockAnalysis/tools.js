@@ -1,19 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { getDB } from "../../core/database.js";
 import { CHART_OUTPUT_GUIDANCE, ensureChartPlaceholdersInBody } from "../chartOutput.js";
-import { BuildStockAiAnalysisMessageParamsSchema, GetArticleAiAnalysisParamsSchema, GetStockAiAnalysisDetailBySessionParamsSchema, GetStockAiAnalysisDetailParamsSchema, GetStockAiAnalysisParamsSchema, QueryArticleAiAnalysisHistoryParamsSchema, QueryStockAiAnalysisStocksParamsSchema, QueryStockAiAnalysisHistoryParamsSchema, SaveStockAiAnalysisParamsSchema } from "./schema.js";
+import { BuildStockAiAnalysisMessageAgentToolSchema, BuildStockAiAnalysisMessageParamsSchema, GetArticleAiAnalysisParamsSchema, GetStockAiAnalysisDetailBySessionParamsSchema, GetStockAiAnalysisDetailParamsSchema, GetStockAiAnalysisParamsSchema, QueryArticleAiAnalysisHistoryParamsSchema, QueryStockAiAnalysisStocksParamsSchema, QueryStockAiAnalysisHistoryParamsSchema, SaveStockAiAnalysisParamsSchema } from "./schema.js";
 const STOCK_AI_ANALYSIS_SKILL = "hedgehog-stock-research";
-const BuildStockAiAnalysisMessageAgentToolSchema = {
-    type: "object",
-    additionalProperties: false,
-    required: ["stock_code", "stock_name"],
-    properties: {
-        stock_code: { type: "string", description: "股票代码" },
-        stock_name: { type: "string", description: "股票名称" },
-        market: { type: "string", description: "市场类型，默认 CN" },
-        sessionId: { type: "string", description: "前端生成的会话 ID" }
-    }
-};
 export function normalizeStockCode(stock_code) {
     return stock_code.trim().toUpperCase().replace(/\.SS$/i, ".SH");
 }

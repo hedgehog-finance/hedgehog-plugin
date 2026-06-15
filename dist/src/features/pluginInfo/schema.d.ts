@@ -77,3 +77,13 @@ export declare const BuildUpdateSkillVersionsMessageParamsSchema: z.ZodEffects<z
     }[] | undefined;
 }, unknown>;
 export type BuildUpdateSkillVersionsMessageParams = z.infer<typeof BuildUpdateSkillVersionsMessageParamsSchema>;
+export interface RuntimeTool {
+    name: string;
+    description: string;
+    parameters: unknown;
+    registerTool?: boolean;
+    agentToolTarget?: "main";
+    execute(params: unknown, ctx: {
+        userId: string;
+    }): Promise<string>;
+}

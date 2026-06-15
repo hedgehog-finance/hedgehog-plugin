@@ -23,4 +23,12 @@ export const GetStockBasicListParamsSchema = z.object({}).nullish();
 export const GetStockBasicInfoParamsSchema = z.object({
     stock_code: z.string().trim().min(1).describe("股票代码")
 });
+export const GetStockBasicInfoAgentToolSchema = {
+    type: "object",
+    additionalProperties: false,
+    required: ["stock_code"],
+    properties: {
+        stock_code: { type: "string", description: "股票代码，例如：000001.SZ 或 600000.SH" }
+    }
+};
 //# sourceMappingURL=schema.js.map

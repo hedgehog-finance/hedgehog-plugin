@@ -1,19 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { getDB } from "../../core/database.js";
-import { BuildInformationVerificationMessageParamsSchema, GetInformationVerificationDetailBySessionParamsSchema, GetInformationVerificationDetailParamsSchema, QueryInformationVerificationHistoryParamsSchema, SaveInformationVerificationParamsSchema } from "./schema.js";
+import { BuildInformationVerificationMessageAgentToolSchema, BuildInformationVerificationMessageParamsSchema, GetInformationVerificationDetailBySessionParamsSchema, GetInformationVerificationDetailParamsSchema, QueryInformationVerificationHistoryParamsSchema, SaveInformationVerificationParamsSchema } from "./schema.js";
 const INFORMATION_VERIFICATION_SKILL = "hedgehog-information-verification";
-const BuildInformationVerificationMessageAgentToolSchema = {
-    type: "object",
-    additionalProperties: false,
-    required: ["newsId", "sourceTitle", "sourceContent"],
-    properties: {
-        newsId: { type: "string", description: "新闻 ID，例如 news-5" },
-        sourceTitle: { type: "string", description: "新闻标题" },
-        publishTime: { type: "string", description: "新闻发布时间" },
-        sourceContent: { type: "string", description: "新闻正文" },
-        sessionId: { type: "string", description: "前端生成的会话 ID" }
-    }
-};
 function buildContent(args) {
     const content = [
         "对这条新闻进行信息求证",

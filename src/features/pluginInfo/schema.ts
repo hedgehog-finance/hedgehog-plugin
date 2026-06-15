@@ -36,3 +36,12 @@ export type UpdateSkillVersionsParams = z.infer<typeof UpdateSkillVersionsParams
 
 export const BuildUpdateSkillVersionsMessageParamsSchema = UpdateSkillVersionsParamsSchema;
 export type BuildUpdateSkillVersionsMessageParams = z.infer<typeof BuildUpdateSkillVersionsMessageParamsSchema>;
+
+export interface RuntimeTool {
+	name: string;
+	description: string;
+	parameters: unknown;
+	registerTool?: boolean;
+	agentToolTarget?: "main";
+	execute(params: unknown, ctx: { userId: string }): Promise<string>;
+}

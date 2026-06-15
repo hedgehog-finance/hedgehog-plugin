@@ -17,6 +17,39 @@ export declare const BuildDeepReasoningMessageParamsSchema: z.ZodObject<{
     sessionId?: string | undefined;
 }>;
 export type BuildDeepReasoningMessageParams = z.infer<typeof BuildDeepReasoningMessageParamsSchema>;
+export declare const BuildDeepReasoningMessageAgentToolSchema: {
+    type: string;
+    additionalProperties: boolean;
+    required: string[];
+    properties: {
+        newsId: {
+            type: string;
+            description: string;
+        };
+        sourceTitle: {
+            type: string;
+            description: string;
+        };
+        sourceContent: {
+            type: string;
+            description: string;
+        };
+        sessionId: {
+            type: string;
+            description: string;
+        };
+    };
+};
+export interface RuntimeTool {
+    name: string;
+    label?: string;
+    description: string;
+    parameters: unknown;
+    registerTool?: boolean;
+    execute(params: unknown, ctx?: {
+        userId: string;
+    }): Promise<string>;
+}
 export declare const QueryDeepReasoningHistoryParamsSchema: z.ZodObject<{
     page: z.ZodDefault<z.ZodNumber>;
     pageSize: z.ZodDefault<z.ZodNumber>;

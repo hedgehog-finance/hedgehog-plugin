@@ -2,36 +2,16 @@ import { randomUUID } from "node:crypto";
 import { getDB } from "../../core/database.js";
 import {
 	BuildInformationVerificationMessageParams,
+	BuildInformationVerificationMessageAgentToolSchema,
 	BuildInformationVerificationMessageParamsSchema,
 	GetInformationVerificationDetailBySessionParamsSchema,
 	GetInformationVerificationDetailParamsSchema,
 	QueryInformationVerificationHistoryParamsSchema,
+	RuntimeTool,
 	SaveInformationVerificationParamsSchema
 } from "./schema.js";
 
-interface RuntimeTool {
-	name: string;
-	label?: string;
-	description: string;
-	parameters: unknown;
-	registerTool?: boolean;
-	execute(params: unknown, ctx?: { userId: string }): Promise<string>;
-}
-
 const INFORMATION_VERIFICATION_SKILL = "hedgehog-information-verification";
-
-const BuildInformationVerificationMessageAgentToolSchema = {
-	type: "object",
-	additionalProperties: false,
-	required: ["newsId", "sourceTitle", "sourceContent"],
-	properties: {
-		newsId: { type: "string", description: "新闻 ID，例如 news-5" },
-		sourceTitle: { type: "string", description: "新闻标题" },
-		publishTime: { type: "string", description: "新闻发布时间" },
-		sourceContent: { type: "string", description: "新闻正文" },
-		sessionId: { type: "string", description: "前端生成的会话 ID" }
-	}
-};
 
 function buildContent(args: BuildInformationVerificationMessageParams): string {
 	const content = [

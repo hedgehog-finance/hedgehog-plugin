@@ -14,35 +14,12 @@ import {
 	StockNoteRow,
 	UpdateStockNoteParams,
 	UpdateStockNoteParamsSchema,
+	GetStockNoteAgentToolSchema,
 	GetStockNoteParamsSchema,
-	GetStockNoteParams
+	GetStockNoteParams,
+	RuntimeTool,
+	WatchlistStock
 } from "./schema.js";
-
-interface RuntimeTool {
-	name: string;
-	label?: string;
-	description: string;
-	parameters: unknown;
-	registerTool?: boolean;
-	execute(params: unknown, ctx: { userId: string }): Promise<string>;
-}
-
-const GetStockNoteAgentToolSchema = {
-	type: "object",
-	additionalProperties: false,
-	required: ["stock_code"],
-	properties: {
-		stock_code: { type: "string", description: "股票代码，例如：000001.SZ 或 600000.SH" }
-	}
-};
-
-interface WatchlistStock {
-	id: string;
-	stock_code: string;
-	stock_name: string;
-	exchange: string;
-	market: string;
-}
 
 function escapeLikePattern(value: string): string {
 	return value.replace(/[\\%_]/g, (char) => `\\${char}`);

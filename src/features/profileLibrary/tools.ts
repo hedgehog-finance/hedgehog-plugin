@@ -11,16 +11,9 @@ import {
 	GetProfileLibrariesParamsSchema,
 	ProfileLibraryRow,
 	QueryProfileLibrariesParams,
-	QueryProfileLibrariesParamsSchema
+	QueryProfileLibrariesParamsSchema,
+	RuntimeTool
 } from "./schema.js";
-
-interface RuntimeTool {
-	name: string;
-	description: string;
-	parameters: unknown;
-	registerTool?: boolean;
-	execute(params: unknown, ctx: { userId: string }): Promise<string>;
-}
 
 function escapeLikePattern(value: string): string {
 	return value.replace(/[\\%_]/g, (char) => `\\${char}`);

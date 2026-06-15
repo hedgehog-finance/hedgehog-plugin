@@ -11,6 +11,20 @@ export const SaveDailyMorningBriefingParamsSchema = z.object({
 }, {
     message: "completed 状态必须提供 content"
 });
+export const SaveDailyMorningBriefingAgentToolSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        id: { type: "string", description: "每日盘前早报 ID；开始生成时不传，后续更新生成结果时必须传入开始时返回的 id" },
+        content: { type: "string", description: "每日盘前早报正文；status=generating 时为空，status=failed 时存入错误信息" },
+        status: { type: "string", enum: ["generating", "completed", "failed"], description: "保存状态：generating 表示开始生成，completed 表示生成成功，failed 表示生成失败" }
+    }
+};
+export const DispatchDailyMorningBriefingAgentToolSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {}
+};
 export const QueryDailyMorningBriefingsParamsSchema = z.object({
     market: z.string().trim().min(1).default("CN").describe("市场类型，默认 CN"),
     page: z.number().int().min(1).default(1).describe("页码"),

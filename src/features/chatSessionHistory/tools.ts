@@ -1,36 +1,12 @@
 import * as fsAsync from "node:fs/promises";
 import type { PluginRuntime } from "openclaw/plugin-sdk/channel-core";
-import { QueryChatSessionHistoryParamsSchema } from "./schema.js";
-
-interface RuntimeTool {
-	name: string;
-	description: string;
-	parameters: unknown;
-	registerTool?: boolean;
-	execute(params: unknown, ctx?: { userId?: string; runtime?: PluginRuntime }): Promise<string>;
-}
-
-type TranscriptMessage = {
-	id: string;
-	role: "user" | "assistant" | "tool" | string;
-	text: string;
-	thinking?: string;
-	timestamp?: number | string;
-	raw?: unknown;
-};
-
-type SelectedInteraction = {
-	messages: TranscriptMessage[];
-	turnComplete: boolean;
-	turnCompleteSource: "lifecycle" | "messages" | "none";
-	lastUserMessageId: string | null;
-	lastAssistantMessageId: string | null;
-};
-
-type TranscriptEntry = {
-	message: TranscriptMessage | null;
-	raw: Record<string, unknown>;
-};
+import {
+	QueryChatSessionHistoryParamsSchema,
+	RuntimeTool,
+	SelectedInteraction,
+	TranscriptEntry,
+	TranscriptMessage
+} from "./schema.js";
 
 function textFromContent(content: unknown): string {
 	if (typeof content === "string") return content;

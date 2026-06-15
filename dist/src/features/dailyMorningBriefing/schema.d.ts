@@ -22,6 +22,44 @@ export declare const SaveDailyMorningBriefingParamsSchema: z.ZodEffects<z.ZodObj
     id?: string | undefined;
 }>;
 export type SaveDailyMorningBriefingParams = z.infer<typeof SaveDailyMorningBriefingParamsSchema>;
+export declare const SaveDailyMorningBriefingAgentToolSchema: {
+    type: string;
+    additionalProperties: boolean;
+    properties: {
+        id: {
+            type: string;
+            description: string;
+        };
+        content: {
+            type: string;
+            description: string;
+        };
+        status: {
+            type: string;
+            enum: string[];
+            description: string;
+        };
+    };
+};
+export declare const DispatchDailyMorningBriefingAgentToolSchema: {
+    type: string;
+    additionalProperties: boolean;
+    properties: {};
+};
+export type RuntimeToolContext = {
+    userId?: string;
+    sessionKey?: string;
+    sessionId?: string;
+    runId?: string;
+};
+export interface RuntimeTool {
+    name: string;
+    label?: string;
+    description: string;
+    parameters: unknown;
+    registerTool?: boolean;
+    execute(params: unknown, ctx?: RuntimeToolContext): Promise<string>;
+}
 export declare const QueryDailyMorningBriefingsParamsSchema: z.ZodObject<{
     market: z.ZodDefault<z.ZodString>;
     page: z.ZodDefault<z.ZodNumber>;
@@ -55,3 +93,17 @@ export interface DailyMorningBriefing {
     createdAt: string;
     updatedAt: string;
 }
+export type DailyMorningBriefingDispatchDecision = {
+    action: "skip";
+    reason: "before_start_time" | "already_completed" | "nudge_throttled" | "retry_cooling_down" | "max_attempts_reached";
+    data?: DailyMorningBriefing;
+    nextRetryAt?: string;
+} | {
+    action: "continue";
+    data: DailyMorningBriefing;
+    idempotencyKey: string;
+} | {
+    action: "start";
+    data: DailyMorningBriefing;
+    idempotencyKey: string;
+};

@@ -3,6 +3,7 @@ import * as os from "node:os";
 import { logger } from "./core/logger.js";
 import { ensureRegisteredToolsAllowedInConfig } from "./openclawConfig.js";
 let runtime = null;
+let workspaceDir = "";
 let dbPath = "";
 let backupDir = "";
 async function ensureAgentToolAllowConfig(next) {
@@ -29,7 +30,7 @@ export function setHedgehogRuntime(next) {
         const cfg = next.config.loadConfig();
         const agentList = (cfg.agents?.list || []);
         const hedgehogAgent = agentList.find((a) => a.id === "hedgehog-finance");
-        const workspaceDir = hedgehogAgent?.workspace ||
+        workspaceDir = hedgehogAgent?.workspace ||
             cfg.agents?.defaults?.workspace ||
             path.join(os.homedir(), ".openclaw", "hedgehog-workspace");
         dbPath = path.join(workspaceDir, "data", "business.db");
@@ -44,6 +45,11 @@ export function getDbPath() {
     if (!dbPath)
         throw new Error("[hedgehog-app] dbPath not initialized");
     return dbPath;
+}
+export function getWorkspaceDir() {
+    if (!workspaceDir)
+        throw new Error("[hedgehog-app] workspaceDir not initialized");
+    return workspaceDir;
 }
 export function getBackupDir() {
     if (!backupDir)

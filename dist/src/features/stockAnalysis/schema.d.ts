@@ -17,6 +17,39 @@ export declare const BuildStockAiAnalysisMessageParamsSchema: z.ZodObject<{
     sessionId?: string | undefined;
 }>;
 export type BuildStockAiAnalysisMessageParams = z.infer<typeof BuildStockAiAnalysisMessageParamsSchema>;
+export declare const BuildStockAiAnalysisMessageAgentToolSchema: {
+    type: string;
+    additionalProperties: boolean;
+    required: string[];
+    properties: {
+        stock_code: {
+            type: string;
+            description: string;
+        };
+        stock_name: {
+            type: string;
+            description: string;
+        };
+        market: {
+            type: string;
+            description: string;
+        };
+        sessionId: {
+            type: string;
+            description: string;
+        };
+    };
+};
+export interface RuntimeTool {
+    name: string;
+    label?: string;
+    description: string;
+    parameters: unknown;
+    registerTool?: boolean;
+    execute(params: unknown, ctx?: {
+        userId: string;
+    }): Promise<string>;
+}
 export declare const GetStockAiAnalysisParamsSchema: z.ZodObject<{
     stock_code: z.ZodString;
     market: z.ZodDefault<z.ZodString>;

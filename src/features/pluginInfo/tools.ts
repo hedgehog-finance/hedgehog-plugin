@@ -2,28 +2,24 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getDB } from "../../core/database.js";
+import { getWorkspaceDir } from "../../runtime.js";
 import {
 	BuildUpdateSkillVersionsMessageParams,
 	BuildUpdateSkillVersionsMessageParamsSchema,
 	GetPluginVersionParamsSchema,
 	GetSkillVersionsParamsSchema,
+	RuntimeTool,
 	UpdateSkillVersionsParams,
 	UpdateSkillVersionsParamsSchema
 } from "./schema.js";
-
-interface RuntimeTool {
-	name: string;
-	description: string;
-	parameters: unknown;
-	registerTool?: boolean;
-	agentToolTarget?: "main";
-	execute(params: unknown, ctx: { userId: string }): Promise<string>;
-}
 
 const UPDATE_SKILL_VERSIONS_TOOL_NAME = "update_hedgehog_skill_versions";
 const HEDGEHOG_INIT_SKILL_NAME = "hedgehog-init";
 
 let cachedPluginVersion: string | null = null;
+
+type SkillVersionRow = { skillName: string; version: string; createdAt: string; updatedAt: string };
+type SkillVersionUpdate = { name: string; version: string };
 
 function findPackageJsonPath(startDir: string): string | null {
 	let currentDir = startDir;
@@ -56,17 +52,68 @@ function getPluginVersion(): string {
 	return cachedPluginVersion;
 }
 
-function getSkillVersions() {
-	const rows = getDB().prepare(`
+function readWorkspaceSkillVersions(): SkillVersionUpdate[] {
+	const versionJsonPath = path.join(getWorkspaceDir(), "version.json");
+	if (!fs.existsSync(versionJsonPath)) return [];
+
+	const parsed = JSON.parse(fs.readFileSync(versionJsonPath, "utf-8")) as unknown;
+	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+
+	const updates: SkillVersionUpdate[] = [];
+	for (const [name, version] of Object.entries(parsed)) {
+		if (typeof version !== "string") continue;
+		const trimmedName = name.trim();
+		const trimmedVersion = version.trim();
+		if (trimmedName && trimmedVersion) updates.push({ name: trimmedName, version: trimmedVersion });
+	}
+	return updates;
+}
+
+function persistSkillVersions(updates: SkillVersionUpdate[]) {
+	const db = getDB();
+	const stmt = db.prepare(`
+		INSERT INTO skill_versions (skillName, version, updatedAt)
+		VALUES (?, ?, STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW'))
+		ON CONFLICT(skillName) DO UPDATE SET
+			version = excluded.version,
+			updatedAt = excluded.updatedAt
+	`);
+
+	db.exec("BEGIN");
+	try {
+		for (const update of updates) {
+			stmt.run(update.name, update.version);
+		}
+		db.exec("COMMIT");
+	} catch (e) {
+		if (db.inTransaction) db.exec("ROLLBACK");
+		throw e;
+	}
+}
+
+function listSkillVersionRows(): SkillVersionRow[] {
+	return getDB().prepare(`
 		SELECT skillName, version, createdAt, updatedAt
 		FROM skill_versions
 		ORDER BY skillName ASC
-	`).all() as { skillName: string; version: string; createdAt: string; updatedAt: string }[];
+	`).all() as SkillVersionRow[];
+}
+
+function getSkillVersions() {
+	let rows = listSkillVersionRows();
+	if (rows.length === 0) {
+		const workspaceVersions = readWorkspaceSkillVersions();
+		if (workspaceVersions.length > 0) {
+			persistSkillVersions(workspaceVersions);
+			rows = listSkillVersionRows();
+		}
+	}
+
 	const versions: Record<string, string> = {};
 	const skills = rows.map(row => {
 		versions[row.skillName] = row.version;
 		return {
-			name: row.skillName,
+			skillName: row.skillName,
 			version: row.version,
 			createdAt: row.createdAt,
 			updatedAt: row.updatedAt
@@ -103,29 +150,10 @@ function normalizeSkillVersionUpdates(params: UpdateSkillVersionsParams) {
 
 function updateSkillVersions(params: UpdateSkillVersionsParams) {
 	const updates = normalizeSkillVersionUpdates(params);
-	
+
 	// 在操作数据库前，确保数据库已初始化
 	// getDB() 会自动创建数据库文件和表结构
-	const db = getDB();
-	
-	const stmt = db.prepare(`
-		INSERT INTO skill_versions (skillName, version, updatedAt)
-		VALUES (?, ?, STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW'))
-		ON CONFLICT(skillName) DO UPDATE SET
-			version = excluded.version,
-			updatedAt = excluded.updatedAt
-	`);
-
-	db.exec("BEGIN");
-	try {
-		for (const update of updates) {
-			stmt.run(update.name, update.version);
-		}
-		db.exec("COMMIT");
-	} catch (e) {
-		if (db.inTransaction) db.exec("ROLLBACK");
-		throw e;
-	}
+	persistSkillVersions(updates);
 
 	return {
 		updated: updates,
@@ -143,33 +171,23 @@ function buildUpdateSkillVersionsMessage(params: BuildUpdateSkillVersionsMessage
 	if (includesHedgehogInit) {
 		return JSON.stringify({
 			cw_system_prompt: [
-				"必须触发并使用 hedgehog-init skill 更新 hedgehog-workspace 的系统提示词到最新版本。",
-				`只有在 hedgehog-init skill 的系统提示词更新流程成功后，才可以调用 ${UPDATE_SKILL_VERSIONS_TOOL_NAME} 工具。`,
-				`成功后必须调用 ${UPDATE_SKILL_VERSIONS_TOOL_NAME} 工具更新本地数据库中的 skill 版本号，参数为 ${JSON.stringify(toolParams)}。`,
+				"必须使用 hedgehog-init skill 更新 hedgehog-workspace 的系统提示词到最新版本。",
+				`成功后必须调用 ${UPDATE_SKILL_VERSIONS_TOOL_NAME} ，参数为 ${JSON.stringify(toolParams)}。`,
 				"如果系统提示词更新失败，禁止调用 update_hedgehog_skill_versions，必须直接说明失败原因。"
 			].join("\n"),
-			cw_context: JSON.stringify({
-				action: "update_hedgehog_init_system_prompt",
-				skills: updates
-			}),
 			cw_content: "Skill升级了，帮我更新`hedgehog-workspace`系统提示词到最新版本。",
-			cw_output: "系统提示词更新成功后，调用 update_hedgehog_skill_versions 工具写入版本，并返回简短结果。"
+			cw_output: "系统提示词更新成功后，返回简短结果。"
 		});
 	}
 
 	return JSON.stringify({
 		cw_system_prompt: [
-			"必须先更新 hedgehog-workspace 中的 hedgehog skills。",
-			`只有在 hedgehog skills 更新成功后，才可以调用 ${UPDATE_SKILL_VERSIONS_TOOL_NAME} 工具。`,
-			`更新成功后必须调用 ${UPDATE_SKILL_VERSIONS_TOOL_NAME} 工具更新本地数据库中的 skill 版本号，参数为 ${JSON.stringify(toolParams)}。`,
+			"必须先通过 hedgehog-init skill 更新 hedgehog-workspace 中的 hedgehog skills。",
+			`更新成功后必须调用 ${UPDATE_SKILL_VERSIONS_TOOL_NAME} ，参数为 ${JSON.stringify(toolParams)}。`,
 			"如果 hedgehog skills 更新失败，禁止调用 update_hedgehog_skill_versions，必须直接说明失败原因。"
 		].join("\n"),
-		cw_context: JSON.stringify({
-			action: "update_hedgehog_skills",
-			skills: updates
-		}),
 		cw_content: "帮我更新`hedgehog-workspace`的hedgehog skills",
-		cw_output: "hedgehog skills 更新成功后，调用 update_hedgehog_skill_versions 工具写入版本，并返回简短结果。"
+		cw_output: "hedgehog skills 更新成功后，并返回简短结果。"
 	});
 }
 

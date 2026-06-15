@@ -10,6 +10,21 @@ export declare const GetWatchlistParamsSchema: z.ZodObject<{
     categoryType?: "industry" | "theme" | undefined;
 }>;
 export type GetWatchlistParams = z.infer<typeof GetWatchlistParamsSchema>;
+export declare const GetWatchlistAgentToolSchema: {
+    type: string;
+    additionalProperties: boolean;
+    properties: {
+        categoryId: {
+            type: string;
+            description: string;
+        };
+        categoryType: {
+            type: string;
+            enum: string[];
+            description: string;
+        };
+    };
+};
 export declare const SyncCategoriesParamsSchema: z.ZodObject<{
     industries: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
     themes: z.ZodOptional<z.ZodArray<z.ZodString, "many">>;
@@ -118,3 +133,14 @@ export declare const GetIndustryListParamsSchema: z.ZodObject<{
     type?: string | undefined;
 }>;
 export type GetIndustryListParams = z.infer<typeof GetIndustryListParamsSchema>;
+export declare const GetIndustryListAgentToolSchema: {
+    type: string;
+    additionalProperties: boolean;
+    properties: {
+        type: {
+            type: string;
+            enum: string[];
+            description: string;
+        };
+    };
+};

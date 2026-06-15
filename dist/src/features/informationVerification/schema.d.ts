@@ -20,6 +20,43 @@ export declare const BuildInformationVerificationMessageParamsSchema: z.ZodObjec
     publishTime?: string | undefined;
 }>;
 export type BuildInformationVerificationMessageParams = z.infer<typeof BuildInformationVerificationMessageParamsSchema>;
+export declare const BuildInformationVerificationMessageAgentToolSchema: {
+    type: string;
+    additionalProperties: boolean;
+    required: string[];
+    properties: {
+        newsId: {
+            type: string;
+            description: string;
+        };
+        sourceTitle: {
+            type: string;
+            description: string;
+        };
+        publishTime: {
+            type: string;
+            description: string;
+        };
+        sourceContent: {
+            type: string;
+            description: string;
+        };
+        sessionId: {
+            type: string;
+            description: string;
+        };
+    };
+};
+export interface RuntimeTool {
+    name: string;
+    label?: string;
+    description: string;
+    parameters: unknown;
+    registerTool?: boolean;
+    execute(params: unknown, ctx?: {
+        userId: string;
+    }): Promise<string>;
+}
 export declare const QueryInformationVerificationHistoryParamsSchema: z.ZodObject<{
     page: z.ZodDefault<z.ZodNumber>;
     pageSize: z.ZodDefault<z.ZodNumber>;

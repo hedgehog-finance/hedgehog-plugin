@@ -3,23 +3,8 @@ import { z } from "zod";
 import { getDB } from "../../core/database.js";
 import { logger } from "../../core/logger.js";
 import { watchlistLogic } from "./logic.js";
-import { AddToWatchlistParamsSchema, GetWatchlistParamsSchema, SyncCategoriesParamsSchema, BatchUpdateSortOrdersParamsSchema, GetIndustryListParamsSchema } from "./schema.js";
+import { AddToWatchlistParamsSchema, GetIndustryListAgentToolSchema, GetWatchlistAgentToolSchema, GetWatchlistParamsSchema, SyncCategoriesParamsSchema, BatchUpdateSortOrdersParamsSchema, GetIndustryListParamsSchema } from "./schema.js";
 let watchlistMutationQueue = Promise.resolve();
-const GetWatchlistAgentToolSchema = {
-    type: "object",
-    additionalProperties: false,
-    properties: {
-        categoryId: { type: "string", description: "分类 ID，不传返回所有" },
-        categoryType: { type: "string", enum: ["industry", "theme"], description: "分类类型" }
-    }
-};
-const GetIndustryListAgentToolSchema = {
-    type: "object",
-    additionalProperties: false,
-    properties: {
-        type: { type: "string", enum: ["industry", "theme", ""], description: "分类类型：industry 行业，theme 主题，空字符串或不传表示全部" }
-    }
-};
 function enqueueWatchlistMutation(task) {
     const previous = watchlistMutationQueue;
     let release;

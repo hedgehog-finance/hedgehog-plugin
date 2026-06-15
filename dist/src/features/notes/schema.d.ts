@@ -179,3 +179,31 @@ export declare const GetStockNoteParamsSchema: z.ZodObject<{
     stock_code: string;
 }>;
 export type GetStockNoteParams = z.infer<typeof GetStockNoteParamsSchema>;
+export declare const GetStockNoteAgentToolSchema: {
+    type: string;
+    additionalProperties: boolean;
+    required: string[];
+    properties: {
+        stock_code: {
+            type: string;
+            description: string;
+        };
+    };
+};
+export interface WatchlistStock {
+    id: string;
+    stock_code: string;
+    stock_name: string;
+    exchange: string;
+    market: string;
+}
+export interface RuntimeTool {
+    name: string;
+    label?: string;
+    description: string;
+    parameters: unknown;
+    registerTool?: boolean;
+    execute(params: unknown, ctx: {
+        userId: string;
+    }): Promise<string>;
+}

@@ -1,28 +1,12 @@
 import { getDB } from "../../core/database.js";
 import {
 	GetStockBasicListParamsSchema,
+	GetStockBasicInfoAgentToolSchema,
 	GetStockBasicInfoParamsSchema,
+	RuntimeTool,
 	StockBasicItem,
 	SyncStockBasicParamsSchema
 } from "./schema.js";
-
-interface RuntimeTool {
-	name: string;
-	label?: string;
-	description: string;
-	parameters: unknown;
-	registerTool?: boolean;
-	execute(params: unknown, ctx?: { userId: string }): Promise<string>;
-}
-
-const GetStockBasicInfoAgentToolSchema = {
-	type: "object",
-	additionalProperties: false,
-	required: ["stock_code"],
-	properties: {
-		stock_code: { type: "string", description: "股票代码，例如：000001.SZ 或 600000.SH" }
-	}
-};
 
 function normalizeStockBasic(stock: StockBasicItem): StockBasicItem {
 	return {

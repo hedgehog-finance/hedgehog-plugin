@@ -78,3 +78,29 @@ export const GetStockNoteParamsSchema = z.object({
 	stock_code: z.string().trim().min(1).describe("股票代码")
 });
 export type GetStockNoteParams = z.infer<typeof GetStockNoteParamsSchema>;
+
+export const GetStockNoteAgentToolSchema = {
+	type: "object",
+	additionalProperties: false,
+	required: ["stock_code"],
+	properties: {
+		stock_code: { type: "string", description: "股票代码，例如：000001.SZ 或 600000.SH" }
+	}
+};
+
+export interface WatchlistStock {
+	id: string;
+	stock_code: string;
+	stock_name: string;
+	exchange: string;
+	market: string;
+}
+
+export interface RuntimeTool {
+	name: string;
+	label?: string;
+	description: string;
+	parameters: unknown;
+	registerTool?: boolean;
+	execute(params: unknown, ctx: { userId: string }): Promise<string>;
+}
