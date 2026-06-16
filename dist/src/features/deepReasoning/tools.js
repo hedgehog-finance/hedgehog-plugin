@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { getDB } from "../../core/database.js";
 import { BuildDeepReasoningMessageAgentToolSchema, BuildDeepReasoningMessageParamsSchema, GetDeepReasoningDetailBySessionParamsSchema, GetDeepReasoningDetailParamsSchema, QueryDeepReasoningHistoryParamsSchema, SaveDeepReasoningAgentToolSchema, SaveDeepReasoningParamsSchema } from "./schema.js";
-const DEEP_REASONING_SKILL = "hedgehog-news-deep-reasoning";
+const DEEP_REASONING_SKILL = "hedgehog-in-depth-analysis";
 function buildContent(args) {
     return [
         "对这条新闻进行深度推演",

@@ -2,10 +2,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getDB } from "../../core/database.js";
-import { getWorkspaceDir } from "../../runtime.js";
+import { getHedgehogRuntime, getWorkspaceDir } from "../../runtime.js";
 import {
 	BuildUpdateSkillVersionsMessageParams,
 	BuildUpdateSkillVersionsMessageParamsSchema,
+	GetOpenClawVersionInfoParamsSchema,
 	GetPluginVersionParamsSchema,
 	GetSkillVersionsParamsSchema,
 	RuntimeTool,
@@ -51,6 +52,13 @@ function getPluginVersion(): string {
 
 	cachedPluginVersion = packageJson.version.trim();
 	return cachedPluginVersion;
+}
+
+function getOpenClawVersionInfo() {
+	const runtime = getHedgehogRuntime();
+	return {
+		version: runtime.version
+	};
 }
 
 function readWorkspaceSkillVersions(): SkillVersionUpdate[] {
@@ -203,6 +211,19 @@ export const pluginInfoTools: Record<string, RuntimeTool> = {
 			return JSON.stringify({
 				success: true,
 				version: getPluginVersion()
+			});
+		}
+	},
+	get_openclaw_version_info: {
+		name: "get_openclaw_version_info",
+		description: "当前 OpenClaw 版本信息",
+		parameters: GetOpenClawVersionInfoParamsSchema,
+		registerTool: false,
+		async execute(params: unknown) {
+			GetOpenClawVersionInfoParamsSchema.parse(params);
+			return JSON.stringify({
+				success: true,
+				...getOpenClawVersionInfo()
 			});
 		}
 	},

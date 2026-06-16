@@ -1,5 +1,6 @@
 import { z } from "zod";
 export declare const GetPluginVersionParamsSchema: z.ZodOptional<z.ZodNullable<z.ZodObject<{}, "strip", z.ZodTypeAny, {}, {}>>>;
+export declare const GetOpenClawVersionInfoParamsSchema: z.ZodOptional<z.ZodNullable<z.ZodObject<{}, "strip", z.ZodTypeAny, {}, {}>>>;
 export declare const GetSkillVersionsParamsSchema: z.ZodOptional<z.ZodNullable<z.ZodObject<{}, "strip", z.ZodTypeAny, {}, {}>>>;
 export declare const UpdateSkillVersionsParamsSchema: z.ZodEffects<z.ZodEffects<z.ZodObject<{
     versions: z.ZodOptional<z.ZodEffects<z.ZodRecord<z.ZodString, z.ZodString>, Record<string, string>, unknown>>;

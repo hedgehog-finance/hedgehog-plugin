@@ -12,7 +12,7 @@ import {
 	SaveDeepReasoningParamsSchema
 } from "./schema.js";
 
-const DEEP_REASONING_SKILL = "hedgehog-news-deep-reasoning";
+const DEEP_REASONING_SKILL = "hedgehog-in-depth-analysis";
 
 function buildContent(args: BuildDeepReasoningMessageParams): string {
 	return [

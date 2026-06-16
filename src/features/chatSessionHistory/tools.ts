@@ -8,6 +8,13 @@ import {
 	TranscriptMessage
 } from "./schema.js";
 
+type RuntimeSessionEntry = {
+	sessionId: string;
+	updatedAt: number;
+	sessionFile?: string;
+	status?: "running" | "done" | "failed" | "killed" | "timeout";
+};
+
 function textFromContent(content: unknown): string {
 	if (typeof content === "string") return content;
 	if (!Array.isArray(content)) return "";
@@ -253,9 +260,28 @@ function selectInteraction(entries: TranscriptEntry[], limit: number, interactio
 	};
 }
 
+function agentIdFromSessionKey(sessionKey: string): string | null {
+	const match = /^agent:([^:]+):/.exec(sessionKey);
+	return match?.[1] || null;
+}
+
 function resolveChatSession(rt: PluginRuntime, accountId: string, sessionId: string, requestedAgentId?: string) {
 	const cfg = rt.config.loadConfig();
 	const chatId = sessionId;
+	if (chatId.startsWith("agent:")) {
+		const agentId = requestedAgentId || agentIdFromSessionKey(chatId) || "main";
+		const sessionKey = chatId;
+		const storePath = rt.agent.session.resolveStorePath(cfg.session?.store, { agentId });
+		const store = rt.agent.session.loadSessionStore(storePath);
+		const entry = store[sessionKey] as RuntimeSessionEntry | undefined;
+		return {
+			agentId,
+			sessionKey,
+			entry: entry || null,
+			matchedBy: entry ? "sessionKey" as const : "none" as const
+		};
+	}
+
 	const route = rt.channel.routing.resolveAgentRoute({
 		cfg,
 		channel: "hedgehog_finance",
@@ -276,18 +302,22 @@ function resolveChatSession(rt: PluginRuntime, accountId: string, sessionId: str
 		});
 	}
 
-	let entry = rt.agent.session.getSessionEntry({ agentId, sessionKey });
+	const storePath = rt.agent.session.resolveStorePath(cfg.session?.store, { agentId });
+	const store = rt.agent.session.loadSessionStore(storePath);
+	let entry = store[sessionKey] as RuntimeSessionEntry | undefined;
 	if (entry) return { agentId, sessionKey, entry, matchedBy: "chatId" as const };
 
-	const matched = rt.agent.session
-		.listSessionEntries({ agentId })
-		.find((item) => item.entry.sessionId === sessionId);
+	const matched = Object.entries(store)
+		.find((item): item is [string, RuntimeSessionEntry] => {
+			const candidate = item[1] as Partial<RuntimeSessionEntry>;
+			return candidate.sessionId === sessionId;
+		});
 	if (matched) {
 		return {
 			cfg,
 			agentId,
-			sessionKey: matched.sessionKey,
-			entry: matched.entry,
+			sessionKey: matched[0],
+			entry: matched[1],
 			matchedBy: "openclawSessionId" as const
 		};
 	}

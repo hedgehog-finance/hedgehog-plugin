@@ -2,8 +2,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getDB } from "../../core/database.js";
-import { getWorkspaceDir } from "../../runtime.js";
-import { BuildUpdateSkillVersionsMessageParamsSchema, GetPluginVersionParamsSchema, GetSkillVersionsParamsSchema, UpdateSkillVersionsAgentToolSchema, UpdateSkillVersionsParamsSchema } from "./schema.js";
+import { getHedgehogRuntime, getWorkspaceDir } from "../../runtime.js";
+import { BuildUpdateSkillVersionsMessageParamsSchema, GetOpenClawVersionInfoParamsSchema, GetPluginVersionParamsSchema, GetSkillVersionsParamsSchema, UpdateSkillVersionsAgentToolSchema, UpdateSkillVersionsParamsSchema } from "./schema.js";
 const UPDATE_SKILL_VERSIONS_TOOL_NAME = "update_hedgehog_skill_versions";
 const HEDGEHOG_INIT_SKILL_NAME = "hedgehog-init";
 let cachedPluginVersion = null;
@@ -33,6 +33,12 @@ function getPluginVersion() {
     }
     cachedPluginVersion = packageJson.version.trim();
     return cachedPluginVersion;
+}
+function getOpenClawVersionInfo() {
+    const runtime = getHedgehogRuntime();
+    return {
+        version: runtime.version
+    };
 }
 function readWorkspaceSkillVersions() {
     const versionJsonPath = path.join(getWorkspaceDir(), "version.json");
@@ -173,6 +179,19 @@ export const pluginInfoTools = {
             return JSON.stringify({
                 success: true,
                 version: getPluginVersion()
+            });
+        }
+    },
+    get_openclaw_version_info: {
+        name: "get_openclaw_version_info",
+        description: "当前 OpenClaw 版本信息",
+        parameters: GetOpenClawVersionInfoParamsSchema,
+        registerTool: false,
+        async execute(params) {
+            GetOpenClawVersionInfoParamsSchema.parse(params);
+            return JSON.stringify({
+                success: true,
+                ...getOpenClawVersionInfo()
             });
         }
     },

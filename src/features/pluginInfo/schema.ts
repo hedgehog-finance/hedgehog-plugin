@@ -2,6 +2,8 @@ import { z } from "zod";
 
 export const GetPluginVersionParamsSchema = z.object({}).nullish();
 
+export const GetOpenClawVersionInfoParamsSchema = z.object({}).nullish();
+
 export const GetSkillVersionsParamsSchema = z.object({}).nullish();
 
 function parseJsonString(value: unknown): unknown {

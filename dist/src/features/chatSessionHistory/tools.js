@@ -239,9 +239,26 @@ function selectInteraction(entries, limit, interactionId) {
         lastAssistantMessageId: lastAssistantMessage?.id || null,
     };
 }
+function agentIdFromSessionKey(sessionKey) {
+    const match = /^agent:([^:]+):/.exec(sessionKey);
+    return match?.[1] || null;
+}
 function resolveChatSession(rt, accountId, sessionId, requestedAgentId) {
     const cfg = rt.config.loadConfig();
     const chatId = sessionId;
+    if (chatId.startsWith("agent:")) {
+        const agentId = requestedAgentId || agentIdFromSessionKey(chatId) || "main";
+        const sessionKey = chatId;
+        const storePath = rt.agent.session.resolveStorePath(cfg.session?.store, { agentId });
+        const store = rt.agent.session.loadSessionStore(storePath);
+        const entry = store[sessionKey];
+        return {
+            agentId,
+            sessionKey,
+            entry: entry || null,
+            matchedBy: entry ? "sessionKey" : "none"
+        };
+    }
     const route = rt.channel.routing.resolveAgentRoute({
         cfg,
         channel: "hedgehog_finance",
@@ -259,18 +276,22 @@ function resolveChatSession(rt, accountId, sessionId, requestedAgentId) {
             peer: { kind: "direct", id: chatId },
         });
     }
-    let entry = rt.agent.session.getSessionEntry({ agentId, sessionKey });
+    const storePath = rt.agent.session.resolveStorePath(cfg.session?.store, { agentId });
+    const store = rt.agent.session.loadSessionStore(storePath);
+    let entry = store[sessionKey];
     if (entry)
         return { agentId, sessionKey, entry, matchedBy: "chatId" };
-    const matched = rt.agent.session
-        .listSessionEntries({ agentId })
-        .find((item) => item.entry.sessionId === sessionId);
+    const matched = Object.entries(store)
+        .find((item) => {
+        const candidate = item[1];
+        return candidate.sessionId === sessionId;
+    });
     if (matched) {
         return {
             cfg,
             agentId,
-            sessionKey: matched.sessionKey,
-            entry: matched.entry,
+            sessionKey: matched[0],
+            entry: matched[1],
             matchedBy: "openclawSessionId"
         };
     }
