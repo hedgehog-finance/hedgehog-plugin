@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { getDB } from "../../core/database.js";
-import { CHART_OUTPUT_GUIDANCE, ensureChartPlaceholdersInBody } from "../chartOutput.js";
+import { CHART_OUTPUT_GUIDANCE } from "../chartOutput.js";
 import {
 	ArticleAiAnalysis,
 	BuildStockAiAnalysisMessageParams,
@@ -214,7 +214,7 @@ export function saveStockAiAnalysisRecord(
 	const status = args.status || "completed";
 	const stock_name = args.stock_name?.trim() || stock_code;
 	const sessionId = args.sessionId?.trim() || "";
-	const content = status === "completed" ? ensureChartPlaceholdersInBody(args.content) : args.content.trim();
+	const content = args.content.trim();
 	const id = randomUUID();
 
 	const existing = status === "generating"

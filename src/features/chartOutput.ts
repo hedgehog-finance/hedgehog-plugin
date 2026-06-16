@@ -1,23 +1,3 @@
-export function ensureChartPlaceholdersInBody(content: string): string {
-	const chartDataMatch = content.match(/(?:\*\*)?\[图表数据\](?:\*\*)?/);
-	if (!chartDataMatch || typeof chartDataMatch.index !== "number") return content;
-
-	const chartDataStart = chartDataMatch.index;
-	const body = content.slice(0, chartDataStart);
-	const chartData = content.slice(chartDataStart);
-	const placeholders = Array.from(chartData.matchAll(/\{图\d+\}\s*:/g), match => match[0].replace(/\s*:$/, ""));
-	const uniquePlaceholders = [...new Set(placeholders)];
-	const missingPlaceholders = uniquePlaceholders.filter(placeholder => !body.includes(placeholder));
-	if (missingPlaceholders.length === 0) return content;
-
-	const insertion = [
-		"## 图表",
-		"",
-		...missingPlaceholders.flatMap(placeholder => [placeholder, ""])
-	].join("\n");
-	return `${body.trimEnd()}\n\n${insertion}\n${chartData.trimStart()}`;
-}
-
 export const CHART_OUTPUT_GUIDANCE = [
 	"正文中如果生成任何图表，必须在对应分析段落先给出明确金融结论，并在结论后单独放置图表占位符，例如：",
 	"{图1}",

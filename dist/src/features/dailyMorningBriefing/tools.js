@@ -1,7 +1,7 @@
 import { getDB } from "../../core/database.js";
 import { scheduleDailyMorningBriefingTurnCron } from "../../dailyMorningBriefingCron.js";
 import { HEDGEHOG_AGENT_ID } from "../../openclawConstants.js";
-import { CHART_OUTPUT_GUIDANCE, ensureChartPlaceholdersInBody } from "../chartOutput.js";
+import { CHART_OUTPUT_GUIDANCE } from "../chartOutput.js";
 import { DispatchDailyMorningBriefingAgentToolSchema, GetDailyMorningBriefingDetailParamsSchema, QueryDailyMorningBriefingsParamsSchema, SaveDailyMorningBriefingAgentToolSchema, SaveDailyMorningBriefingParamsSchema } from "./schema.js";
 const DAILY_MORNING_BRIEFING_MARKET = "CN";
 const DAILY_MORNING_BRIEFING_START_HOUR = 7;
@@ -371,7 +371,7 @@ export const dailyMorningBriefingTools = {
                 }
             }
             const watchlistSnapshot = JSON.stringify(getFullWatchlistSnapshot(db));
-            const content = args.status === "completed" ? ensureChartPlaceholdersInBody(args.content) : args.content.trim();
+            const content = args.content.trim();
             const nextRetryAt = args.status === "failed" ? getNextRetryAtForFailedAttempt(1) : "";
             if (args.status === "failed") {
                 const updated = markDailyMorningBriefingFailed(db, id, content);
