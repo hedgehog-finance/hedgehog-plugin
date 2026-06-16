@@ -46,6 +46,24 @@ export declare const DispatchDailyMorningBriefingAgentToolSchema: {
     additionalProperties: boolean;
     properties: {};
 };
+export declare const BuildDailyMorningBriefingMessageParamsSchema: z.ZodObject<{
+    sessionId: z.ZodDefault<z.ZodOptional<z.ZodString>>;
+}, "strip", z.ZodTypeAny, {
+    sessionId: string;
+}, {
+    sessionId?: string | undefined;
+}>;
+export type BuildDailyMorningBriefingMessageParams = z.infer<typeof BuildDailyMorningBriefingMessageParamsSchema>;
+export declare const BuildDailyMorningBriefingMessageAgentToolSchema: {
+    type: string;
+    additionalProperties: boolean;
+    properties: {
+        sessionId: {
+            type: string;
+            description: string;
+        };
+    };
+};
 export type RuntimeToolContext = {
     userId?: string;
     sessionKey?: string;
@@ -95,7 +113,7 @@ export interface DailyMorningBriefing {
 }
 export type DailyMorningBriefingDispatchDecision = {
     action: "skip";
-    reason: "before_start_time" | "already_completed" | "nudge_throttled" | "retry_cooling_down" | "max_attempts_reached";
+    reason: "before_start_time" | "already_completed" | "already_generating" | "nudge_throttled" | "retry_cooling_down" | "max_attempts_reached";
     data?: DailyMorningBriefing;
     nextRetryAt?: string;
 } | {

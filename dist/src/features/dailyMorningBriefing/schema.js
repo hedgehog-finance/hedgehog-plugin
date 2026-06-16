@@ -25,6 +25,16 @@ export const DispatchDailyMorningBriefingAgentToolSchema = {
     additionalProperties: false,
     properties: {}
 };
+export const BuildDailyMorningBriefingMessageParamsSchema = z.object({
+    sessionId: z.string().trim().optional().default("").describe("前端生成的会话 ID；不传则使用每日早报固定会话 ID")
+});
+export const BuildDailyMorningBriefingMessageAgentToolSchema = {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+        sessionId: { type: "string", description: "前端生成的会话 ID；不传则使用每日早报固定会话 ID" }
+    }
+};
 export const QueryDailyMorningBriefingsParamsSchema = z.object({
     market: z.string().trim().min(1).default("CN").describe("市场类型，默认 CN"),
     page: z.number().int().min(1).default(1).describe("页码"),

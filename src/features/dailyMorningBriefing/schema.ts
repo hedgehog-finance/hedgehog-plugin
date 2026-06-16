@@ -30,6 +30,19 @@ export const DispatchDailyMorningBriefingAgentToolSchema = {
 	properties: {}
 };
 
+export const BuildDailyMorningBriefingMessageParamsSchema = z.object({
+	sessionId: z.string().trim().optional().default("").describe("前端生成的会话 ID；不传则使用每日早报固定会话 ID")
+});
+export type BuildDailyMorningBriefingMessageParams = z.infer<typeof BuildDailyMorningBriefingMessageParamsSchema>;
+
+export const BuildDailyMorningBriefingMessageAgentToolSchema = {
+	type: "object",
+	additionalProperties: false,
+	properties: {
+		sessionId: { type: "string", description: "前端生成的会话 ID；不传则使用每日早报固定会话 ID" }
+	}
+};
+
 export type RuntimeToolContext = {
 	userId?: string;
 	sessionKey?: string;
@@ -71,6 +84,6 @@ export interface DailyMorningBriefing {
 }
 
 export type DailyMorningBriefingDispatchDecision =
-	| { action: "skip"; reason: "before_start_time" | "already_completed" | "nudge_throttled" | "retry_cooling_down" | "max_attempts_reached"; data?: DailyMorningBriefing; nextRetryAt?: string }
+	| { action: "skip"; reason: "before_start_time" | "already_completed" | "already_generating" | "nudge_throttled" | "retry_cooling_down" | "max_attempts_reached"; data?: DailyMorningBriefing; nextRetryAt?: string }
 	| { action: "continue"; data: DailyMorningBriefing; idempotencyKey: string }
 	| { action: "start"; data: DailyMorningBriefing; idempotencyKey: string };
