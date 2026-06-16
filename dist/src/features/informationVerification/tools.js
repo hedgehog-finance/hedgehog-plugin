@@ -26,7 +26,7 @@ function buildInformationVerificationMessage(args) {
         cw_system_prompt: [
             `第 1 步：必须触发并使用 ${INFORMATION_VERIFICATION_SKILL} skill 生成信息求证与置信度审计报告。`,
             `第 2 步：生成成功后必须调用 save_information_verification，参数为 ${buildFinalSaveParams("completed")}，content 传最终完整求证报告正文。`,
-            `失败处理：任一步失败后必须调用 save_information_verification，参数为 ${buildFinalSaveParams("failed")}，content 存放完整错误信息。`
+            `失败处理：生成失败后必须调用 save_information_verification，参数为 ${buildFinalSaveParams("failed")}，content 存放完整错误信息。`
         ].join("\n"),
         cw_content: buildContent(args),
         cw_output: [

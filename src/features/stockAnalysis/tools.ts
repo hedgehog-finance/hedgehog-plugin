@@ -52,8 +52,7 @@ function buildStockAiAnalysisMessage(args: BuildStockAiAnalysisMessageParams): s
 		cw_system_prompt: [
 			`第 1 步：必须触发并使用 ${STOCK_AI_ANALYSIS_SKILL} skill 生成个股 AI 分析报告。`,
 			`第 2 步：生成成功后必须调用 save_stock_ai_analysis，参数为 ${buildFinalSaveParams("completed")}，content 传最终完整个股分析正文。`,
-			`失败处理：任一步失败后必须调用 save_stock_ai_analysis，参数为 ${buildFinalSaveParams("failed")}，content 存放完整错误信息。`,
-			"如果最终内容包含 [图表数据]，正文必须已经包含所有对应图表占位符。"
+			`失败处理：生成失败后必须调用 save_stock_ai_analysis，参数为 ${buildFinalSaveParams("failed")}，content 存放完整错误信息。`,
 		].join("\n"),
 		cw_market: args.market,
 		cw_content: buildStockAiAnalysisContent({ ...args, stock_code }),

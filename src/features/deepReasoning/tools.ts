@@ -37,7 +37,7 @@ function buildDeepReasoningMessage(args: BuildDeepReasoningMessageParams): strin
 		cw_system_prompt: [
 			`第 1 步：必须触发并使用 ${DEEP_REASONING_SKILL} skill 生成新闻事件深度推演报告。`,
 			`第 2 步：生成成功后必须调用 save_article_deep_reasoning_analysis，参数为 ${buildFinalSaveParams("completed")}，content 传最终完整深度推演报告正文。`,
-			`失败处理：任一步失败后必须调用 save_article_deep_reasoning_analysis，参数为 ${buildFinalSaveParams("failed")}，content 存放完整错误信息。`
+			`失败处理：生成失败后必须调用 save_article_deep_reasoning_analysis，参数为 ${buildFinalSaveParams("failed")}，content 存放完整错误信息。`
 		].join("\n"),
 		cw_content: buildContent(args),
 		cw_output: [

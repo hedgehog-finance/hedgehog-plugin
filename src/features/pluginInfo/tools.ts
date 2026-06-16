@@ -180,9 +180,9 @@ function buildUpdateSkillVersionsMessage(params: BuildUpdateSkillVersionsMessage
 	if (includesHedgehogInit) {
 		return JSON.stringify({
 			cw_system_prompt: [
-				"必须使用 hedgehog-init skill 更新 hedgehog-workspace 的系统提示词到最新版本。",
-				`成功后必须调用 ${UPDATE_SKILL_VERSIONS_TOOL_NAME} ，参数为 ${JSON.stringify(toolParams)}。`,
-				"如果系统提示词更新失败，禁止调用 update_hedgehog_skill_versions，必须直接说明失败原因。"
+				"第 1 步：必须使用 hedgehog-init skill 更新 hedgehog-workspace 的系统提示词到最新版本。",
+				`第 2 步：更新成功后必须调用 ${UPDATE_SKILL_VERSIONS_TOOL_NAME}，参数为 ${JSON.stringify(toolParams)}。`,
+				"失败处理：如果系统提示词更新失败，禁止调用 update_hedgehog_skill_versions，必须直接说明失败原因。"
 			].join("\n"),
 			cw_content: "Skill升级了，帮我更新`hedgehog-workspace`系统提示词到最新版本。",
 			cw_output: "系统提示词更新成功后，返回简短结果。"
@@ -191,9 +191,9 @@ function buildUpdateSkillVersionsMessage(params: BuildUpdateSkillVersionsMessage
 
 	return JSON.stringify({
 		cw_system_prompt: [
-			"必须先通过 hedgehog-init skill 更新 hedgehog-workspace 中的 hedgehog skills。",
-			`更新成功后必须调用 ${UPDATE_SKILL_VERSIONS_TOOL_NAME} ，参数为 ${JSON.stringify(toolParams)}。`,
-			"如果 hedgehog skills 更新失败，禁止调用 update_hedgehog_skill_versions，必须直接说明失败原因。"
+			"第 1 步：必须使用 hedgehog-init skill 更新 hedgehog-workspace 中的 hedgehog skills。",
+			`第 2 步：更新成功后必须调用 ${UPDATE_SKILL_VERSIONS_TOOL_NAME}，参数为 ${JSON.stringify(toolParams)}。`,
+			"失败处理：如果 hedgehog skills 更新失败，禁止调用 update_hedgehog_skill_versions，必须直接说明失败原因。"
 		].join("\n"),
 		cw_content: "帮我更新`hedgehog-workspace`的hedgehog skills",
 		cw_output: "hedgehog skills 更新成功后，并返回简短结果。"

@@ -2,14 +2,10 @@ import { logger } from "./core/logger.js";
 import { HEDGEHOG_AGENT_ID } from "./openclawConstants.js";
 const DAILY_MORNING_BRIEFING_CRON_ID = "hedgehog_daily_morning_briefing";
 const DAILY_MORNING_BRIEFING_SESSION_KEY = `cron:${DAILY_MORNING_BRIEFING_CRON_ID}`;
-const DAILY_MORNING_BRIEFING_SKILL = "hedgehog-daily-morning-briefing";
 const DAILY_MORNING_BRIEFING_MESSAGE = JSON.stringify({
     cw_system_prompt: [
-        "必须先调用 dispatch_daily_morning_briefing，参数为 {}。",
-        "dispatch_daily_morning_briefing 会负责判断 7:30 前跳过、当天已完成跳过、当天生成中则调度当天生成会话继续、当天未触发则启动当天生成会话。",
-        "调用 dispatch_daily_morning_briefing 后必须立即停止。",
-        "不要直接调用 save_daily_morning_briefing、不要直接触发 skill、不要自行生成早报正文。",
-        `真正的每日早报生成会在按日期隔离的会话中触发并使用 ${DAILY_MORNING_BRIEFING_SKILL} skill 完成。`
+        "第 1 步：必须调用 dispatch_daily_morning_briefing，参数为 {}。",
+        "第 2 步：调用完成后立即停止。"
     ].join("\n"),
     cw_market: "CN",
     cw_content: "调度每日早报生成"

@@ -27,11 +27,10 @@ const DAILY_MORNING_BRIEFING_FAILED_RETRY_COOLDOWNS_MS = [
 
 const DAILY_MORNING_BRIEFING_GENERATION_MESSAGE = JSON.stringify({
 	cw_system_prompt: [
-		"开始分析前必须先调用 save_daily_morning_briefing，参数为 {\"status\":\"generating\",\"content\":\"\"}；如果返回 skipped=true，必须立即停止，不要继续调用 skill 或生成正文。",
-		`必须触发并使用 ${DAILY_MORNING_BRIEFING_SKILL} skill 生成盘前简报。`,
-		"生成成功后必须调用 save_daily_morning_briefing，参数为 {\"status\":\"completed\",\"content\":\"...\"}，content 传最终完整早报正文。",
-		"生成失败后必须调用 save_daily_morning_briefing，参数为 {\"status\":\"failed\",\"content\":\"...\"}，content 存放完整错误信息。",
-		"如果最终内容包含 [图表数据]，正文必须已经包含所有对应图表占位符。"
+		"第 1 步：开始分析前必须先调用 save_daily_morning_briefing，参数为 {\"status\":\"generating\",\"content\":\"\"}；如果返回 skipped=true，必须立即停止，不要继续调用 skill 或生成正文。",
+		`第 2 步：必须触发并使用 ${DAILY_MORNING_BRIEFING_SKILL} skill 生成盘前简报。`,
+		"第 3 步：生成成功后必须调用 save_daily_morning_briefing，参数为 {\"status\":\"completed\",\"content\":\"...\"}，content 传最终完整早报正文。",
+		"失败处理：生成失败后必须调用 save_daily_morning_briefing，参数为 {\"status\":\"failed\",\"content\":\"...\"}，content 存放完整错误信息。",
 	].join("\n"),
 	cw_market: "CN",
 	cw_content: "生成每日早报",
@@ -188,7 +187,20 @@ function mapDailyMorningBriefingRow(row: Omit<DailyMorningBriefing, "watchlistSn
 }
 
 function mapDailyMorningBriefingSummary(row: Omit<DailyMorningBriefing, "content" | "watchlistSnapshot">): Omit<DailyMorningBriefing, "content" | "watchlistSnapshot"> {
-	return row;
+	return {
+		id: row.id,
+		market: row.market,
+		briefingDate: row.briefingDate,
+		status: row.status,
+		sessionId: row.sessionId,
+		createdAt: row.createdAt,
+		updatedAt: row.updatedAt
+	};
+}
+
+function summarizeDailyMorningBriefing(data: DailyMorningBriefing | undefined): Omit<DailyMorningBriefing, "content" | "watchlistSnapshot"> | undefined {
+	if (!data) return undefined;
+	return mapDailyMorningBriefingSummary(data);
 }
 
 function getFullWatchlistSnapshot(db: ReturnType<typeof getDB>): unknown[] {
@@ -383,14 +395,14 @@ export const dailyMorningBriefingTools: Record<string, RuntimeTool> = {
 			const briefingDate = getLocalDateString();
 			const decision = claimDailyMorningBriefingDispatch(db, market, briefingDate);
 			if (decision.action === "skip") {
-				return JSON.stringify({ success: true, skipped: true, reason: decision.reason, nextRetryAt: decision.nextRetryAt, data: decision.data });
+				return JSON.stringify({ success: true, skipped: true, reason: decision.reason, nextRetryAt: decision.nextRetryAt, data: summarizeDailyMorningBriefing(decision.data) });
 			}
 			if (isDailyMorningBriefingCompleted(db, decision.data.id)) {
-				return JSON.stringify({ success: true, skipped: true, reason: "already_completed", data: selectDailyMorningBriefing(db, decision.data.id) });
+				return JSON.stringify({ success: true, skipped: true, reason: "already_completed", data: summarizeDailyMorningBriefing(decision.data) });
 			}
 			if (decision.action === "continue") {
 				await scheduleDailyMorningBriefingTurn("continue", decision.data.sessionId, DAILY_MORNING_BRIEFING_CONTINUE_MESSAGE, decision.idempotencyKey);
-				return JSON.stringify({ success: true, skipped: true, reason: "already_generating", action: "continued", data: decision.data });
+				return JSON.stringify({ success: true, skipped: true, reason: "already_generating", action: "continued", data: summarizeDailyMorningBriefing(decision.data) });
 			}
 
 			try {
@@ -399,7 +411,7 @@ export const dailyMorningBriefingTools: Record<string, RuntimeTool> = {
 				markDailyMorningBriefingFailed(db, decision.data.id, e instanceof Error ? e.message : String(e));
 				throw e;
 			}
-			return JSON.stringify({ success: true, action: "started", data: decision.data });
+			return JSON.stringify({ success: true, action: "started", data: summarizeDailyMorningBriefing(decision.data) });
 		}
 	},
 	save_daily_morning_briefing: {
