@@ -38,7 +38,7 @@ function buildInformationVerificationMessage(args: BuildInformationVerificationM
 	return JSON.stringify({
 		cw_system_prompt: [
 			`第 1 步：必须触发并使用 ${INFORMATION_VERIFICATION_SKILL} skill 生成信息求证与置信度审计报告。`,
-			`第 2 步：生成成功后必须调用 save_information_verification，参数为 ${buildFinalSaveParams("completed")}，content 传最终完整求证报告正文。`,
+			`第 2 步：生成成功后必须调用 save_information_verification，参数为 ${buildFinalSaveParams("completed")}，content 必须原样传入 skill 生成的最终完整求证报告全文，禁止摘要、改写、删减、重排或重新组织。`,
 			`失败处理：生成失败后必须调用 save_information_verification，参数为 ${buildFinalSaveParams("failed")}，content 存放完整错误信息。`
 		].join("\n"),
 		cw_content: buildContent(args),

@@ -31,7 +31,7 @@ const DAILY_MORNING_BRIEFING_GENERATION_MESSAGE = JSON.stringify({
 	cw_system_prompt: [
 		"第 1 步：开始分析前必须先调用 save_daily_morning_briefing，参数为 {\"status\":\"generating\",\"content\":\"\"}；如果返回 skipped=true，必须立即停止，不要继续调用 skill 或生成正文。",
 		`第 2 步：必须触发并使用 ${DAILY_MORNING_BRIEFING_SKILL} skill 生成盘前简报。`,
-		"第 3 步：生成成功后必须调用 save_daily_morning_briefing，参数为 {\"status\":\"completed\",\"content\":\"...\"}，content 传最终完整早报正文。",
+		"第 3 步：生成成功后必须调用 save_daily_morning_briefing，参数为 {\"status\":\"completed\",\"content\":\"...\"}，content 必须原样传入 skill 生成的最终完整早报全文，禁止摘要、改写、删减、重排或重新组织。",
 		"失败处理：生成失败后必须调用 save_daily_morning_briefing，参数为 {\"status\":\"failed\",\"content\":\"...\"}，content 存放完整错误信息。",
 	].join("\n"),
 	cw_market: "CN",
