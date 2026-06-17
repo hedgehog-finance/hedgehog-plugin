@@ -26,13 +26,13 @@ export const DispatchDailyMorningBriefingAgentToolSchema = {
     properties: {}
 };
 export const BuildDailyMorningBriefingMessageParamsSchema = z.object({
-    sessionId: z.string().trim().optional().default("").describe("前端生成的会话 ID；不传则使用每日早报固定会话 ID")
+    sessionId: z.string().trim().optional().default("").describe("兼容字段，当前不参与会话选择。每日盘前早报统一由后端调度到固定业务会话。")
 });
 export const BuildDailyMorningBriefingMessageAgentToolSchema = {
     type: "object",
     additionalProperties: false,
     properties: {
-        sessionId: { type: "string", description: "前端生成的会话 ID；不传则使用每日早报固定会话 ID" }
+        sessionId: { type: "string", description: "兼容字段，当前不参与会话选择。每日盘前早报统一由后端调度到固定业务会话。" }
     }
 };
 export const QueryDailyMorningBriefingsParamsSchema = z.object({

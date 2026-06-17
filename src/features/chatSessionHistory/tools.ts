@@ -7,6 +7,7 @@ import {
 	TranscriptEntry,
 	TranscriptMessage
 } from "./schema.js";
+import { getDB } from "../../core/database.js";
 
 type RuntimeSessionEntry = {
 	sessionId: string;
@@ -128,7 +129,7 @@ function collectThinking(entries: TranscriptEntry[]) {
 	return lines.join("\n");
 }
 
-function extractTranscriptMessage(entry: unknown, includeRaw: boolean): TranscriptMessage | null {
+function extractTranscriptMessage(entry: unknown, includeRaw: boolean, includeEmptyAssistant: boolean): TranscriptMessage | null {
 	if (!entry || typeof entry !== "object") return null;
 	const record = entry as Record<string, unknown>;
 	const message = record.message && typeof record.message === "object" && !Array.isArray(record.message)
@@ -139,7 +140,7 @@ function extractTranscriptMessage(entry: unknown, includeRaw: boolean): Transcri
 	if (!role) return null;
 
 	const text = textFromContent(message.content) || textFromContent(message.text);
-	if (role === "assistant" && text.trim().length === 0) return null;
+	if (!includeEmptyAssistant && role === "assistant" && text.trim().length === 0) return null;
 	const id = typeof record.id === "string"
 		? record.id
 		: typeof message.id === "string"
@@ -175,6 +176,7 @@ async function readTranscriptEntries(params: {
 	filePath: string;
 	includeTools: boolean;
 	includeRaw: boolean;
+	includeEmptyAssistant: boolean;
 }): Promise<TranscriptEntry[]> {
 	let content = "";
 	try {
@@ -188,7 +190,7 @@ async function readTranscriptEntries(params: {
 	for (const line of lines) {
 		try {
 			const entry = JSON.parse(line) as unknown;
-			const message = extractTranscriptMessage(entry, params.includeRaw);
+			const message = extractTranscriptMessage(entry, params.includeRaw, params.includeEmptyAssistant);
 			const raw = entry && typeof entry === "object" && !Array.isArray(entry) ? entry as Record<string, unknown> : {};
 			if (message && (params.includeTools || message.role === "user" || message.role === "assistant")) {
 				entries.push({ message, raw });
@@ -265,23 +267,45 @@ function agentIdFromSessionKey(sessionKey: string): string | null {
 	return match?.[1] || null;
 }
 
+function resolveDailyMorningBriefingSession(rt: PluginRuntime, dailyMorningBriefingId: string, requestedAgentId?: string) {
+	try {
+		const db = getDB();
+		const row = db.prepare(`
+			SELECT sessionId
+			FROM daily_morning_briefings
+			WHERE id = ?
+			ORDER BY updatedAt DESC
+			LIMIT 1
+		`).get(dailyMorningBriefingId) as { sessionId: string } | undefined;
+		if (!row?.sessionId) return null;
+
+		const cfg = rt.config.loadConfig();
+		const sessionKey = row.sessionId;
+		const agentId = requestedAgentId || agentIdFromSessionKey(sessionKey) || "hedgehog-finance";
+		const storePath = rt.agent.session.resolveStorePath(cfg.session?.store, { agentId });
+		const store = rt.agent.session.loadSessionStore(storePath);
+		const sessionKeyCandidates = Array.from(new Set([
+			sessionKey,
+			sessionKey.replace(":CN:", ":cn:"),
+			sessionKey.replace(":cn:", ":CN:")
+		]));
+		const matchedSessionKey = sessionKeyCandidates.find(candidate => store[candidate]);
+		const entry = matchedSessionKey ? store[matchedSessionKey] as RuntimeSessionEntry | undefined : undefined;
+		if (!entry) return null;
+		return {
+			agentId,
+			sessionKey: matchedSessionKey || sessionKey,
+			entry,
+			matchedBy: "dailyMorningBriefing" as const
+		};
+	} catch {
+		return null;
+	}
+}
+
 function resolveChatSession(rt: PluginRuntime, accountId: string, sessionId: string, requestedAgentId?: string) {
 	const cfg = rt.config.loadConfig();
 	const chatId = sessionId;
-	if (chatId.startsWith("agent:")) {
-		const agentId = requestedAgentId || agentIdFromSessionKey(chatId) || "main";
-		const sessionKey = chatId;
-		const storePath = rt.agent.session.resolveStorePath(cfg.session?.store, { agentId });
-		const store = rt.agent.session.loadSessionStore(storePath);
-		const entry = store[sessionKey] as RuntimeSessionEntry | undefined;
-		return {
-			agentId,
-			sessionKey,
-			entry: entry || null,
-			matchedBy: entry ? "sessionKey" as const : "none" as const
-		};
-	}
-
 	const route = rt.channel.routing.resolveAgentRoute({
 		cfg,
 		channel: "hedgehog_finance",
@@ -328,7 +352,7 @@ function resolveChatSession(rt: PluginRuntime, accountId: string, sessionId: str
 export const chatSessionHistoryTools: Record<string, RuntimeTool> = {
 	query_chat_session_history: {
 		name: "query_chat_session_history",
-		description: "根据前端 Chat 页 sessionId 查询 OpenClaw 会话最后一次交互内容。该 sessionId 当前等同于 chatId；接口会自动推导 sessionKey 并读取会话 transcript。",
+		description: "查询 OpenClaw 会话 transcript。普通聊天通过 sessionId/chatId 解析 channel sessionKey；每日盘前早报通过 dailyMorningBriefingId 读取业务记录中的实际 sessionKey，并兼容早报 market 片段大小写差异。",
 		parameters: QueryChatSessionHistoryParamsSchema,
 		registerTool: false,
 		async execute(params, ctx) {
@@ -339,12 +363,24 @@ export const chatSessionHistoryTools: Record<string, RuntimeTool> = {
 				return JSON.stringify({ success: false, error: "runtime or userId unavailable" });
 			}
 
-			const resolved = resolveChatSession(rt, String(accountId), args.sessionId, args.agentId);
+			const requestedSessionId = args.sessionId || args.dailyMorningBriefingId || "";
+			let resolved;
+			if (args.sessionId) {
+				resolved = resolveChatSession(rt, String(accountId), args.sessionId, args.agentId);
+			} else {
+				const dailyMorningBriefingId = args.dailyMorningBriefingId || "";
+				resolved = resolveDailyMorningBriefingSession(rt, dailyMorningBriefingId, args.agentId) || {
+					agentId: args.agentId || "hedgehog-finance",
+					sessionKey: dailyMorningBriefingId,
+					entry: null,
+					matchedBy: "none" as const
+				};
+			}
 			if (!resolved.entry) {
 				return JSON.stringify({
 					success: true,
 					data: {
-						sessionId: args.sessionId,
+						sessionId: requestedSessionId,
 						agentId: resolved.agentId,
 						sessionKey: resolved.sessionKey,
 						openclawSessionId: null,
@@ -367,14 +403,15 @@ export const chatSessionHistoryTools: Record<string, RuntimeTool> = {
 			const entries = await readTranscriptEntries({
 				filePath,
 				includeTools: args.includeTools,
-				includeRaw: args.includeRaw
+				includeRaw: args.includeRaw,
+				includeEmptyAssistant: args.includeEmptyAssistant
 			});
 			const selectedInteraction = selectInteraction(entries, args.limit, args.interactionId);
 
 			return JSON.stringify({
 				success: true,
 				data: {
-					sessionId: args.sessionId,
+					sessionId: requestedSessionId,
 					agentId: resolved.agentId,
 					sessionKey: resolved.sessionKey,
 					openclawSessionId: resolved.entry.sessionId,

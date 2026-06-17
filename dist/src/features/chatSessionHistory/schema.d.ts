@@ -1,25 +1,49 @@
 import { z } from "zod";
 import type { PluginRuntime } from "openclaw/plugin-sdk/channel-core";
-export declare const QueryChatSessionHistoryParamsSchema: z.ZodObject<{
-    sessionId: z.ZodString;
+export declare const QueryChatSessionHistoryParamsSchema: z.ZodEffects<z.ZodObject<{
+    sessionId: z.ZodOptional<z.ZodString>;
+    dailyMorningBriefingId: z.ZodOptional<z.ZodString>;
     interactionId: z.ZodOptional<z.ZodString>;
     agentId: z.ZodOptional<z.ZodString>;
     limit: z.ZodDefault<z.ZodOptional<z.ZodNumber>>;
     includeTools: z.ZodDefault<z.ZodOptional<z.ZodBoolean>>;
+    includeEmptyAssistant: z.ZodDefault<z.ZodOptional<z.ZodBoolean>>;
     includeRaw: z.ZodDefault<z.ZodOptional<z.ZodBoolean>>;
 }, "strip", z.ZodTypeAny, {
-    sessionId: string;
     limit: number;
     includeTools: boolean;
+    includeEmptyAssistant: boolean;
     includeRaw: boolean;
+    sessionId?: string | undefined;
+    dailyMorningBriefingId?: string | undefined;
     interactionId?: string | undefined;
     agentId?: string | undefined;
 }, {
-    sessionId: string;
+    sessionId?: string | undefined;
+    dailyMorningBriefingId?: string | undefined;
     interactionId?: string | undefined;
     agentId?: string | undefined;
     limit?: number | undefined;
     includeTools?: boolean | undefined;
+    includeEmptyAssistant?: boolean | undefined;
+    includeRaw?: boolean | undefined;
+}>, {
+    limit: number;
+    includeTools: boolean;
+    includeEmptyAssistant: boolean;
+    includeRaw: boolean;
+    sessionId?: string | undefined;
+    dailyMorningBriefingId?: string | undefined;
+    interactionId?: string | undefined;
+    agentId?: string | undefined;
+}, {
+    sessionId?: string | undefined;
+    dailyMorningBriefingId?: string | undefined;
+    interactionId?: string | undefined;
+    agentId?: string | undefined;
+    limit?: number | undefined;
+    includeTools?: boolean | undefined;
+    includeEmptyAssistant?: boolean | undefined;
     includeRaw?: boolean | undefined;
 }>;
 export type QueryChatSessionHistoryParams = z.infer<typeof QueryChatSessionHistoryParamsSchema>;

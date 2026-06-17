@@ -214,45 +214,6 @@ function markDailyMorningBriefingFailed(db, id, content) {
 	`).run(content, getNextRetryAtForFailedAttempt(attemptCount), id);
     return result.changes > 0;
 }
-function preflightBuildDailyMorningBriefingMessage(db, market, briefingDate, sessionId) {
-    const id = buildDailyMorningBriefingId(market, briefingDate);
-    const existing = db.prepare(`
-		SELECT id, market, briefingDate, content, status, sessionId, watchlistSnapshot, createdAt, updatedAt
-		FROM daily_morning_briefings
-		WHERE id = ?
-	`).get(id);
-    if (existing?.status === "completed") {
-        return { action: "skip", reason: "already_completed", data: mapDailyMorningBriefingRow(existing) };
-    }
-    if (existing?.status === "generating") {
-        return { action: "skip", reason: "already_generating", data: mapDailyMorningBriefingRow(existing) };
-    }
-    const resolvedSessionId = sessionId || buildDailyMorningBriefingAttemptSessionId(market, briefingDate, 1);
-    const watchlistSnapshot = JSON.stringify(getFullWatchlistSnapshot(db));
-    if (existing) {
-        db.prepare(`
-			UPDATE daily_morning_briefings
-			SET content = '',
-				status = 'generating',
-				sessionId = ?,
-				lastNudgeAt = ?,
-				nextRetryAt = '',
-				attemptCount = CASE WHEN attemptCount > 0 THEN attemptCount + 1 ELSE 1 END,
-				watchlistSnapshot = ?,
-				updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
-			WHERE id = ?
-				AND status != 'completed'
-		`).run(resolvedSessionId, getHalfHourBucket(), watchlistSnapshot, id);
-    }
-    else {
-        db.prepare(`
-			INSERT INTO daily_morning_briefings (id, market, briefingDate, content, status, sessionId, lastNudgeAt, nextRetryAt, attemptCount, watchlistSnapshot)
-			VALUES (?, ?, ?, '', 'generating', ?, ?, '', 1, ?)
-		`).run(id, market, briefingDate, resolvedSessionId, getHalfHourBucket(), watchlistSnapshot);
-    }
-    const data = selectDailyMorningBriefing(db, id);
-    return { action: "start", data, idempotencyKey: `${id}:build:${data.sessionId}` };
-}
 function claimDailyMorningBriefingDispatch(db, market, briefingDate) {
     if (isBeforeDailyMorningBriefingStart()) {
         return { action: "skip", reason: "before_start_time" };
@@ -382,31 +343,12 @@ export const dailyMorningBriefingTools = {
     build_daily_morning_briefing_message: {
         name: "build_daily_morning_briefing_message",
         label: "构建每日盘前早报消息",
-        description: "发起每日盘前早报任务，返回 Agent 消息。",
+        description: "发起每日盘前早报生成任务。接口内部使用固定业务会话调度 agent turn，并返回调度结果；调用方不需要提交额外的聊天消息。",
         parameters: BuildDailyMorningBriefingMessageAgentToolSchema,
         registerTool: false,
         async execute(params) {
-            const args = BuildDailyMorningBriefingMessageParamsSchema.parse(params ?? {});
-            const db = getDB();
-            const market = DAILY_MORNING_BRIEFING_MARKET;
-            const briefingDate = getLocalDateString();
-            const decision = preflightBuildDailyMorningBriefingMessage(db, market, briefingDate, args.sessionId);
-            if (decision.action === "skip") {
-                return JSON.stringify({
-                    success: true,
-                    skipped: true,
-                    reason: decision.reason,
-                    data: summarizeDailyMorningBriefing(decision.data)
-                });
-            }
-            return JSON.stringify({
-                success: true,
-                data: {
-                    status: decision.data.status,
-                    sessionId: decision.data.sessionId,
-                    message: DAILY_MORNING_BRIEFING_GENERATION_MESSAGE
-                }
-            });
+            BuildDailyMorningBriefingMessageParamsSchema.parse(params ?? {});
+            return dispatchDailyMorningBriefing();
         }
     },
     save_daily_morning_briefing: {
