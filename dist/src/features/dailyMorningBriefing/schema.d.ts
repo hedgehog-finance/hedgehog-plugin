@@ -1,46 +1,4 @@
 import { z } from "zod";
-export declare const DailyMorningBriefingStatusSchema: z.ZodEnum<["generating", "completed", "failed"]>;
-export declare const SaveDailyMorningBriefingParamsSchema: z.ZodEffects<z.ZodObject<{
-    id: z.ZodOptional<z.ZodString>;
-    content: z.ZodDefault<z.ZodString>;
-    status: z.ZodDefault<z.ZodEnum<["generating", "completed", "failed"]>>;
-}, "strip", z.ZodTypeAny, {
-    status: "generating" | "completed" | "failed";
-    content: string;
-    id?: string | undefined;
-}, {
-    status?: "generating" | "completed" | "failed" | undefined;
-    content?: string | undefined;
-    id?: string | undefined;
-}>, {
-    status: "generating" | "completed" | "failed";
-    content: string;
-    id?: string | undefined;
-}, {
-    status?: "generating" | "completed" | "failed" | undefined;
-    content?: string | undefined;
-    id?: string | undefined;
-}>;
-export type SaveDailyMorningBriefingParams = z.infer<typeof SaveDailyMorningBriefingParamsSchema>;
-export declare const SaveDailyMorningBriefingAgentToolSchema: {
-    type: string;
-    additionalProperties: boolean;
-    properties: {
-        id: {
-            type: string;
-            description: string;
-        };
-        content: {
-            type: string;
-            description: string;
-        };
-        status: {
-            type: string;
-            enum: string[];
-            description: string;
-        };
-    };
-};
 export declare const DispatchDailyMorningBriefingAgentToolSchema: {
     type: string;
     additionalProperties: boolean;

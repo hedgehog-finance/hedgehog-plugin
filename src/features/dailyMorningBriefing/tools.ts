@@ -10,9 +10,7 @@ import {
 	DispatchDailyMorningBriefingAgentToolSchema,
 	GetDailyMorningBriefingDetailParamsSchema,
 	QueryDailyMorningBriefingsParamsSchema,
-	RuntimeTool,
-	SaveDailyMorningBriefingAgentToolSchema,
-	SaveDailyMorningBriefingParamsSchema
+	RuntimeTool
 } from "./schema.js";
 
 const DAILY_MORNING_BRIEFING_MARKET = "CN";
@@ -27,12 +25,11 @@ const DAILY_MORNING_BRIEFING_FAILED_RETRY_COOLDOWNS_MS = [
 	60 * 60 * 1000
 ];
 
-const DAILY_MORNING_BRIEFING_GENERATION_MESSAGE = JSON.stringify({
+const DAILY_MORNING_BRIEFING_GENERATION_MESSAGE = (sessionId: string) => JSON.stringify({
 	cw_system_prompt: [
-		"第 1 步：开始分析前必须先调用 save_daily_morning_briefing，参数为 {\"status\":\"generating\",\"content\":\"\"}；如果返回 skipped=true，必须立即停止，不要继续调用 skill 或生成正文。",
-		`第 2 步：必须触发并使用 ${DAILY_MORNING_BRIEFING_SKILL} skill 生成盘前简报。`,
-		"第 3 步：生成成功后必须调用 save_daily_morning_briefing，参数为 {\"status\":\"completed\",\"content\":\"...\"}，content 必须原样传入 skill 生成的最终完整早报全文，禁止摘要、改写、删减、重排或重新组织。",
-		"失败处理：生成失败后必须调用 save_daily_morning_briefing，参数为 {\"status\":\"failed\",\"content\":\"...\"}，content 存放完整错误信息。",
+		`第 1 步：必须触发并使用 ${DAILY_MORNING_BRIEFING_SKILL} skill 生成盘前简报。`,
+		`第 2 步：生成成功后必须调用 save_task_output，参数为 {"sessionId":"${sessionId}","saveStrategy":"overwrite","output":"...","status":"completed"}，output 必须原样传入 skill 生成的最终完整早报全文，禁止摘要、改写、删减、重排或重新组织。`,
+		`失败处理：生成失败后必须调用 save_task_output，参数为 {"sessionId":"${sessionId}","saveStrategy":"overwrite","output":"...","status":"failed"}，output 存放完整错误信息。`
 	].join("\n"),
 	cw_market: "CN",
 	cw_content: "生成每日早报",
@@ -102,10 +99,6 @@ function buildDailyMorningBriefingSessionId(market: string, briefingDate: string
 	return `agent:${HEDGEHOG_AGENT_ID}:cron:${DAILY_MORNING_BRIEFING_CRON_ID}:${market}:${briefingDate}`;
 }
 
-function buildDailyMorningBriefingAttemptSessionId(market: string, briefingDate: string, attemptCount: number): string {
-	return buildDailyMorningBriefingSessionId(market, briefingDate);
-}
-
 async function scheduleDailyMorningBriefingTurn(
 	action: "start" | "continue",
 	sessionKey: string,
@@ -122,27 +115,118 @@ async function scheduleDailyMorningBriefingTurn(
 
 function selectDailyMorningBriefing(
 	db: ReturnType<typeof getDB>,
-	id: string
+	sessionId: string
 ): DailyMorningBriefing {
 	const row = db.prepare(`
-		SELECT id, market, briefingDate, content, status, sessionId, watchlistSnapshot, createdAt, updatedAt
-		FROM daily_morning_briefings
-		WHERE id = ?
-	`).get(id) as (Omit<DailyMorningBriefing, "watchlistSnapshot"> & { watchlistSnapshot: string }) | undefined;
+		SELECT id, reference, content, status, created_at, updated_at
+		FROM agent_sessions
+		WHERE id = ? AND biz_type = 'morning_briefing'
+	`).get(sessionId) as { id: string; reference: string; content: string; status: string; created_at: string; updated_at: string } | undefined;
 
 	if (!row) throw new Error("daily morning briefing was not saved");
+	const ref = JSON.parse(row.reference || "{}");
 
 	return {
 		id: row.id,
-		market: row.market,
-		briefingDate: row.briefingDate,
+		market: ref.market || "CN",
+		briefingDate: ref.briefingDate || "",
 		content: row.content,
 		status: row.status,
-		sessionId: row.sessionId,
-		watchlistSnapshot: JSON.parse(row.watchlistSnapshot || "[]"),
-		createdAt: row.createdAt,
-		updatedAt: row.updatedAt
+		sessionId: row.id,
+		watchlistSnapshot: ref.watchlistSnapshot || [],
+		createdAt: row.created_at,
+		updatedAt: row.updated_at
 	};
+}
+
+function findSessionIdByBriefingId(db: ReturnType<typeof getDB>, briefingId: string): string | undefined {
+	const row = db.prepare(`
+		SELECT id
+		FROM agent_sessions
+		WHERE id = ? AND biz_type = 'morning_briefing'
+	`).get(briefingId) as { id: string } | undefined;
+	return row?.id;
+}
+
+function syncWorkAndTaskStatus(db: ReturnType<typeof getDB>, sessionId: string, status: string, content: string) {
+	const session = db.prepare("SELECT work_id, task_id FROM agent_sessions WHERE id = ?").get(sessionId) as { work_id?: string; task_id?: string } | undefined;
+	if (session?.work_id && session?.task_id) {
+		// 1. Map to works.status (pending, running, paused, completed, failed, cancelled)
+		let workStatus = "running";
+		if (status === "completed" || status === "skipped") {
+			workStatus = "completed";
+		} else if (status === "failed") {
+			workStatus = "failed";
+		} else if (status === "cancelled") {
+			workStatus = "cancelled";
+		} else if (status === "pending" || status === "scheduled") {
+			workStatus = "pending";
+		} else if (status === "paused") {
+			workStatus = "paused";
+		} else if (status === "running" || status === "generating") {
+			workStatus = "running";
+		}
+
+		// 2. Map to tasks.status (pending, running, completed, failed, skipped)
+		let taskStatus = "running";
+		if (status === "completed") {
+			taskStatus = "completed";
+		} else if (status === "failed" || status === "cancelled") {
+			taskStatus = "failed";
+		} else if (status === "skipped") {
+			taskStatus = "skipped";
+		} else if (status === "pending" || status === "scheduled") {
+			taskStatus = "pending";
+		} else if (status === "running" || status === "generating" || status === "paused") {
+			taskStatus = "running";
+		}
+
+		db.prepare(`
+			UPDATE tasks
+			SET status = ?,
+				content = ?,
+				completed_at = CASE WHEN ? IN ('completed', 'failed', 'skipped') THEN STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW') ELSE completed_at END,
+				updated_at = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
+			WHERE id = ?
+		`).run(taskStatus, content, taskStatus, session.task_id);
+
+		db.prepare(`
+			UPDATE works
+			SET status = ?,
+				completed_at = CASE WHEN ? IN ('completed', 'failed', 'cancelled') THEN STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW') ELSE completed_at END,
+				updated_at = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
+			WHERE id = ?
+		`).run(workStatus, workStatus, session.work_id);
+	}
+}
+
+function updateDailyMorningBriefingStatus(
+	db: ReturnType<typeof getDB>,
+	sessionId: string,
+	status: string,
+	content: string,
+	watchlistSnapshot: string,
+	nextRetryAt: string,
+	lastNudgeAt?: string,
+	attemptCount?: number
+) {
+	const row = db.prepare("SELECT reference FROM agent_sessions WHERE id = ?").get(sessionId) as { reference?: string } | undefined;
+	const refObj = JSON.parse(row?.reference || "{}");
+	if (watchlistSnapshot) refObj.watchlistSnapshot = JSON.parse(watchlistSnapshot || "[]");
+	if (nextRetryAt !== undefined) refObj.nextRetryAt = nextRetryAt;
+	if (lastNudgeAt !== undefined) refObj.lastNudgeAt = lastNudgeAt;
+	if (attemptCount !== undefined) refObj.attemptCount = attemptCount;
+
+	db.prepare(`
+		UPDATE agent_sessions
+		SET content = ?,
+			status = ?,
+			reference = ?,
+			updated_at = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
+		WHERE id = ?
+	`).run(content, status, JSON.stringify(refObj), sessionId);
+
+	syncWorkAndTaskStatus(db, sessionId, status, content);
 }
 
 function selectExistingActiveDailyMorningBriefing(
@@ -152,25 +236,26 @@ function selectExistingActiveDailyMorningBriefing(
 ): DailyMorningBriefing | undefined {
 	const row = db.prepare(`
 		SELECT id
-		FROM daily_morning_briefings
-		WHERE market = ?
-			AND briefingDate = ?
-			AND status IN ('generating', 'completed')
+		FROM agent_sessions
+		WHERE biz_type = 'morning_briefing'
+			AND json_extract(reference, '$.market') = ?
+			AND json_extract(reference, '$.briefingDate') = ?
+			AND status IN ('generating', 'completed', 'active')
 		ORDER BY
-			CASE status WHEN 'completed' THEN 0 WHEN 'generating' THEN 1 ELSE 2 END,
-			updatedAt DESC,
-			createdAt DESC
+			CASE status WHEN 'completed' THEN 0 WHEN 'active' THEN 0 WHEN 'generating' THEN 1 ELSE 2 END,
+			updated_at DESC,
+			created_at DESC
 		LIMIT 1
 	`).get(market, briefingDate) as { id: string } | undefined;
 	return row ? selectDailyMorningBriefing(db, row.id) : undefined;
 }
 
-function isDailyMorningBriefingCompleted(db: ReturnType<typeof getDB>, id: string): boolean {
+function isDailyMorningBriefingCompleted(db: ReturnType<typeof getDB>, sessionId: string): boolean {
 	const row = db.prepare(`
 		SELECT status
-		FROM daily_morning_briefings
+		FROM agent_sessions
 		WHERE id = ?
-	`).get(id) as { status: string } | undefined;
+	`).get(sessionId) as { status: string } | undefined;
 	return row?.status === "completed";
 }
 
@@ -203,6 +288,14 @@ function mapDailyMorningBriefingSummary(row: Omit<DailyMorningBriefing, "content
 function summarizeDailyMorningBriefing(data: DailyMorningBriefing | undefined): Omit<DailyMorningBriefing, "content" | "watchlistSnapshot"> | undefined {
 	if (!data) return undefined;
 	return mapDailyMorningBriefingSummary(data);
+}
+
+function summarizeDailyMorningBriefingPersistence(data: DailyMorningBriefing) {
+	return {
+		...mapDailyMorningBriefingSummary(data),
+		persisted: true,
+		contentLength: data.content?.length || 0
+	};
 }
 
 function getFullWatchlistSnapshot(db: ReturnType<typeof getDB>): unknown[] {
@@ -242,34 +335,62 @@ function insertScheduledDailyMorningBriefing(
 	lastNudgeAt: string,
 	watchlistSnapshot: string
 ): DailyMorningBriefing {
+	const workId = `work_${sessionId}`;
+	const taskId = `task_${sessionId}`;
+	const refObj = {
+		market,
+		briefingDate,
+		watchlistSnapshot: JSON.parse(watchlistSnapshot || "[]"),
+		lastNudgeAt,
+		nextRetryAt: "",
+		attemptCount: 1
+	};
+
 	db.prepare(`
-		INSERT INTO daily_morning_briefings (id, market, briefingDate, content, status, sessionId, lastNudgeAt, nextRetryAt, attemptCount, watchlistSnapshot)
-		VALUES (?, ?, ?, '', 'scheduled', ?, ?, '', 1, ?)
-	`).run(id, market, briefingDate, sessionId, lastNudgeAt, watchlistSnapshot);
-	return selectDailyMorningBriefing(db, id);
+		INSERT OR IGNORE INTO works (id, name, description, status, orchestrator_type, created_by)
+		VALUES (?, ?, '每日早报生成工作流', 'running', 'hard', 'scheduler')
+	`).run(workId, `每日早报工作流 (${market} ${briefingDate})`);
+
+	db.prepare(`
+		INSERT OR IGNORE INTO tasks (id, work_id, name, status, agent_session_id)
+		VALUES (?, ?, '生成每日早报', 'running', ?)
+	`).run(taskId, workId, sessionId);
+
+	db.prepare(`
+		INSERT OR IGNORE INTO agent_sessions (id, session_name, biz_type, status, reference, work_id, task_id)
+		VALUES (?, ?, 'morning_briefing', 'scheduled', ?, ?, ?)
+	`).run(sessionId, `每日早报 (${market} ${briefingDate})`, JSON.stringify(refObj), workId, taskId);
+
+	return selectDailyMorningBriefing(db, sessionId);
 }
 
 function markDailyMorningBriefingFailed(
 	db: ReturnType<typeof getDB>,
-	id: string,
+	sessionId: string,
 	content: string
 ): boolean {
 	const row = db.prepare(`
-		SELECT attemptCount
-		FROM daily_morning_briefings
+		SELECT reference
+		FROM agent_sessions
 		WHERE id = ?
-	`).get(id) as { attemptCount: number } | undefined;
-	const attemptCount = Math.max(1, Number(row?.attemptCount) || 1);
-	const result = db.prepare(`
-		UPDATE daily_morning_briefings
+	`).get(sessionId) as { reference?: string } | undefined;
+	const refObj = JSON.parse(row?.reference || "{}");
+	const attemptCount = Math.max(1, Number(refObj.attemptCount) || 1);
+	const nextRetryAt = getNextRetryAtForFailedAttempt(attemptCount);
+	refObj.nextRetryAt = nextRetryAt;
+
+	db.prepare(`
+		UPDATE agent_sessions
 		SET status = 'failed',
 			content = ?,
-			nextRetryAt = ?,
-			updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
+			reference = ?,
+			updated_at = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
 		WHERE id = ?
 			AND status != 'completed'
-	`).run(content, getNextRetryAtForFailedAttempt(attemptCount), id);
-	return result.changes > 0;
+	`).run(content, JSON.stringify(refObj), sessionId);
+
+	syncWorkAndTaskStatus(db, sessionId, "failed", content);
+	return true;
 }
 
 function claimDailyMorningBriefingDispatch(
@@ -281,103 +402,84 @@ function claimDailyMorningBriefingDispatch(
 		return { action: "skip", reason: "before_start_time" };
 	}
 
-	const id = buildDailyMorningBriefingId(market, briefingDate);
+	const expectedSessionId = buildDailyMorningBriefingSessionId(market, briefingDate);
 	const watchlistSnapshot = JSON.stringify(getFullWatchlistSnapshot(db));
 
 	db.exec("BEGIN IMMEDIATE");
 	try {
 		const existing = db.prepare(`
-			SELECT id, market, briefingDate, content, status, sessionId, lastNudgeAt, nextRetryAt, attemptCount, watchlistSnapshot, createdAt, updatedAt
-			FROM daily_morning_briefings
+			SELECT id, reference, content, status, created_at, updated_at
+			FROM agent_sessions
 			WHERE id = ?
-		`).get(id) as (Omit<DailyMorningBriefing, "watchlistSnapshot"> & { lastNudgeAt: string; nextRetryAt: string; attemptCount: number; watchlistSnapshot: string }) | undefined;
+		`).get(expectedSessionId) as { id: string; reference: string; content: string; status: string; created_at: string; updated_at: string } | undefined;
 
-		if (existing?.status === "completed") {
+		const existingBriefing = existing ? selectDailyMorningBriefing(db, expectedSessionId) : undefined;
+		const refObj = existing ? JSON.parse(existing.reference || "{}") : {};
+		const attemptCount = Number(refObj.attemptCount) || 1;
+		const lastNudgeAt = refObj.lastNudgeAt || "";
+		const nextRetryAt = refObj.nextRetryAt || "";
+
+		if (existing?.status === "completed" || existing?.status === "active") {
 			db.exec("COMMIT");
-			return { action: "skip", reason: "already_completed", data: mapDailyMorningBriefingRow(existing) };
+			return { action: "skip", reason: "already_completed", data: existingBriefing };
 		}
 
 		if (existing?.status === "generating") {
 			const halfHourBucket = getHalfHourBucket();
-			if (existing.lastNudgeAt === halfHourBucket) {
+			if (lastNudgeAt === halfHourBucket) {
 				db.exec("COMMIT");
-				return { action: "skip", reason: "nudge_throttled", data: mapDailyMorningBriefingRow(existing) };
+				return { action: "skip", reason: "nudge_throttled", data: existingBriefing };
 			}
 
-			db.prepare(`
-				UPDATE daily_morning_briefings
-				SET lastNudgeAt = ?,
-					updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
-				WHERE id = ?
-					AND status = 'generating'
-			`).run(halfHourBucket, id);
-			const data = selectDailyMorningBriefing(db, id);
+			updateDailyMorningBriefingStatus(db, expectedSessionId, "generating", existing.content, watchlistSnapshot, nextRetryAt, halfHourBucket);
+			const data = selectDailyMorningBriefing(db, expectedSessionId);
 			db.exec("COMMIT");
-			return { action: "continue", data, idempotencyKey: `${id}:continue:${halfHourBucket}` };
+			return { action: "continue", data, idempotencyKey: `${expectedSessionId}:continue:${halfHourBucket}` };
 		}
 
 		if (existing?.status === "scheduled") {
 			const halfHourBucket = getHalfHourBucket();
-			if (existing.lastNudgeAt === halfHourBucket) {
+			if (lastNudgeAt === halfHourBucket) {
 				db.exec("COMMIT");
-				return { action: "skip", reason: "nudge_throttled", data: mapDailyMorningBriefingRow(existing) };
+				return { action: "skip", reason: "nudge_throttled", data: existingBriefing };
 			}
 
-			db.prepare(`
-				UPDATE daily_morning_briefings
-				SET lastNudgeAt = ?,
-					updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
-				WHERE id = ?
-					AND status = 'scheduled'
-			`).run(halfHourBucket, id);
-			const data = selectDailyMorningBriefing(db, id);
+			updateDailyMorningBriefingStatus(db, expectedSessionId, "scheduled", existing.content, watchlistSnapshot, nextRetryAt, halfHourBucket);
+			const data = selectDailyMorningBriefing(db, expectedSessionId);
 			db.exec("COMMIT");
-			return { action: "start", data, idempotencyKey: `${id}:start:${data.sessionId}:${halfHourBucket}` };
+			return { action: "start", data, idempotencyKey: `${expectedSessionId}:start:${data.sessionId}:${halfHourBucket}` };
 		}
 
 		if (existing) {
-			const currentAttemptCount = Math.max(0, Number(existing.attemptCount) || 0);
+			const currentAttemptCount = Math.max(0, attemptCount);
 			const nextAttemptCount = currentAttemptCount > 0 ? currentAttemptCount + 1 : 1;
 			if (nextAttemptCount > DAILY_MORNING_BRIEFING_MAX_ATTEMPTS_PER_DAY) {
 				db.exec("COMMIT");
-				return { action: "skip", reason: "max_attempts_reached", data: mapDailyMorningBriefingRow(existing) };
+				return { action: "skip", reason: "max_attempts_reached", data: existingBriefing };
 			}
 
-			const nextRetryAtMs = getUnixMsFromDbTimestamp(existing.nextRetryAt);
+			const nextRetryAtMs = getUnixMsFromDbTimestamp(nextRetryAt);
 			if (nextRetryAtMs > Date.now()) {
 				db.exec("COMMIT");
-				return { action: "skip", reason: "retry_cooling_down", nextRetryAt: existing.nextRetryAt, data: mapDailyMorningBriefingRow(existing) };
+				return { action: "skip", reason: "retry_cooling_down", nextRetryAt, data: existingBriefing };
 			}
 
-			const sessionId = buildDailyMorningBriefingAttemptSessionId(market, briefingDate, nextAttemptCount);
-			db.prepare(`
-				UPDATE daily_morning_briefings
-				SET content = '',
-					status = 'scheduled',
-					sessionId = ?,
-					lastNudgeAt = ?,
-					nextRetryAt = '',
-					attemptCount = ?,
-					watchlistSnapshot = ?,
-					updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
-				WHERE id = ?
-					AND status != 'completed'
-			`).run(sessionId, getHalfHourBucket(), nextAttemptCount, watchlistSnapshot, id);
+			updateDailyMorningBriefingStatus(db, expectedSessionId, "scheduled", "", watchlistSnapshot, "", getHalfHourBucket(), nextAttemptCount);
 		} else {
 			insertScheduledDailyMorningBriefing(
 				db,
 				market,
 				briefingDate,
-				id,
-				buildDailyMorningBriefingAttemptSessionId(market, briefingDate, 1),
+				expectedSessionId,
+				expectedSessionId,
 				getHalfHourBucket(),
 				watchlistSnapshot
 			);
 		}
 
-		const data = selectDailyMorningBriefing(db, id);
+		const data = selectDailyMorningBriefing(db, expectedSessionId);
 		db.exec("COMMIT");
-		return { action: "start", data, idempotencyKey: `${id}:start:${data.sessionId}` };
+		return { action: "start", data, idempotencyKey: `${expectedSessionId}:start:${data.sessionId}` };
 	} catch (e) {
 		if (db.inTransaction) db.exec("ROLLBACK");
 		throw e;
@@ -401,7 +503,7 @@ async function dispatchDailyMorningBriefing(): Promise<string> {
 	}
 
 	try {
-		await scheduleDailyMorningBriefingTurn("start", decision.data.sessionId, DAILY_MORNING_BRIEFING_GENERATION_MESSAGE, decision.idempotencyKey);
+		await scheduleDailyMorningBriefingTurn("start", decision.data.sessionId, DAILY_MORNING_BRIEFING_GENERATION_MESSAGE(decision.data.sessionId), decision.idempotencyKey);
 	} catch (e) {
 		markDailyMorningBriefingFailed(db, decision.data.id, e instanceof Error ? e.message : String(e));
 		throw e;
@@ -431,77 +533,6 @@ export const dailyMorningBriefingTools: Record<string, RuntimeTool> = {
 			return dispatchDailyMorningBriefing();
 		}
 	},
-	save_daily_morning_briefing: {
-		name: "save_daily_morning_briefing",
-		label: "保存每日盘前早报",
-		description: "保存每日盘前早报的生成进度和最终结果。生成前必须先以 status=generating、content=\"\" 调用；生成成功后以 status=completed 保存完整正文 content；生成失败后以 status=failed 保存完整错误信息。未传 id 时会自动使用当天固定记录，完成或失败时可直接更新当天早报。",
-		parameters: SaveDailyMorningBriefingAgentToolSchema,
-		registerTool: true,
-		async execute(params, ctx) {
-			const args = SaveDailyMorningBriefingParamsSchema.parse(params);
-			const db = getDB();
-			const market = DAILY_MORNING_BRIEFING_MARKET;
-			const briefingDate = getLocalDateString();
-			const id = args.id || buildDailyMorningBriefingId(market, briefingDate);
-			const existing = db.prepare(`
-				SELECT status, sessionId
-				FROM daily_morning_briefings
-				WHERE id = ?
-			`).get(id) as { status: string; sessionId: string } | undefined;
-			const expectedSessionId = buildDailyMorningBriefingSessionId(market, briefingDate);
-			const currentSessionId = ctx?.sessionKey?.trim() || ctx?.sessionId?.trim() || "";
-			const sessionId = existing?.sessionId || expectedSessionId;
-			if (args.status === "generating") {
-				const isClaimedSession = (existing?.status === "scheduled" || existing?.status === "generating") && currentSessionId && existing.sessionId === currentSessionId;
-				if (!isClaimedSession && isBeforeDailyMorningBriefingStart()) {
-					return JSON.stringify({ success: true, skipped: true, reason: "before_start_time" });
-				}
-
-				const active = selectExistingActiveDailyMorningBriefing(db, market, briefingDate);
-				if (active) {
-					if (active.status === "generating" && currentSessionId && active.sessionId === currentSessionId) {
-						return JSON.stringify({ success: true, data: active });
-					}
-					const reason = active.status === "generating" ? "already_generating" : "already_completed";
-					return JSON.stringify({ success: true, skipped: true, reason, data: active });
-				}
-			}
-
-			const watchlistSnapshot = JSON.stringify(getFullWatchlistSnapshot(db));
-			const content = args.content.trim();
-			const nextRetryAt = args.status === "failed" ? getNextRetryAtForFailedAttempt(1) : "";
-			if (args.status === "failed") {
-				const updated = markDailyMorningBriefingFailed(db, id, content);
-				if (!updated) {
-					db.prepare(`
-						INSERT INTO daily_morning_briefings (id, market, briefingDate, content, status, sessionId, nextRetryAt, attemptCount, watchlistSnapshot)
-						VALUES (?, ?, ?, ?, 'failed', ?, ?, 1, ?)
-					`).run(id, market, briefingDate, content, sessionId, nextRetryAt, watchlistSnapshot);
-				}
-				return JSON.stringify({ success: true, data: selectDailyMorningBriefing(db, id) });
-			}
-
-			const result = db.prepare(`
-				UPDATE daily_morning_briefings
-				SET content = ?,
-					status = ?,
-					watchlistSnapshot = ?,
-					sessionId = CASE WHEN ? != '' THEN ? ELSE sessionId END,
-					nextRetryAt = ?,
-					updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
-				WHERE id = ?
-			`).run(content, args.status, watchlistSnapshot, sessionId, sessionId, nextRetryAt, id);
-			if (result.changes === 0) {
-				db.prepare(`
-					INSERT INTO daily_morning_briefings (id, market, briefingDate, content, status, sessionId, lastNudgeAt, nextRetryAt, attemptCount, watchlistSnapshot)
-					VALUES (?, ?, ?, ?, ?, ?, '', '', ?, ?)
-				`).run(id, market, briefingDate, content, args.status, sessionId, args.status === "generating" ? 1 : 0, watchlistSnapshot);
-			}
-
-			const data = selectDailyMorningBriefing(db, id);
-			return JSON.stringify({ success: true, data });
-		}
-	},
 	query_daily_morning_briefings: {
 		name: "query_daily_morning_briefings",
 		label: "查询每日盘前早报",
@@ -515,20 +546,35 @@ export const dailyMorningBriefingTools: Record<string, RuntimeTool> = {
 			const offset = (args.page - 1) * args.pageSize;
 			const total = (db.prepare(`
 				SELECT COUNT(*) AS total
-				FROM daily_morning_briefings
-				WHERE market = ?
+				FROM agent_sessions
+				WHERE biz_type = 'morning_briefing'
+					AND json_extract(reference, '$.market') = ?
 			`).get(market) as { total: number }).total || 0;
 			const rows = db.prepare(`
-				SELECT id, market, briefingDate, status, sessionId, createdAt, updatedAt
-				FROM daily_morning_briefings
-				WHERE market = ?
-				ORDER BY briefingDate DESC, updatedAt DESC
+				SELECT id, reference, status, created_at, updated_at
+				FROM agent_sessions
+				WHERE biz_type = 'morning_briefing'
+					AND json_extract(reference, '$.market') = ?
+				ORDER BY json_extract(reference, '$.briefingDate') DESC, updated_at DESC
 				LIMIT ? OFFSET ?
-			`).all(market, args.pageSize, offset) as Omit<DailyMorningBriefing, "content" | "watchlistSnapshot">[];
+			`).all(market, args.pageSize, offset) as any[];
+
+			const data = rows.map(r => {
+				const ref = JSON.parse(r.reference || "{}");
+				return mapDailyMorningBriefingSummary({
+					id: r.id,
+					market: ref.market || "CN",
+					briefingDate: ref.briefingDate || "",
+					status: r.status,
+					sessionId: r.id,
+					createdAt: r.created_at,
+					updatedAt: r.updated_at
+				});
+			});
 
 			return JSON.stringify({
 				success: true,
-				data: rows.map(mapDailyMorningBriefingSummary),
+				data,
 				pagination: {
 					page: args.page,
 					pageSize: args.pageSize,

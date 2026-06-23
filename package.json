@@ -1,6 +1,6 @@
 {
   "name": "@hedgehog-finance/hedgehog-plugin",
-  "version": "1.0.41",
+  "version": "1.0.42",
   "description": "Hedgehog App WebSocket channel and Watchlist Tools for OpenClaw",
   "keywords": [
     "bot",
@@ -48,10 +48,8 @@
         "get_watchlist",
         "get_industry_list",
         "dispatch_daily_morning_briefing",
-        "save_daily_morning_briefing",
-        "save_stock_ai_analysis",
-        "save_information_verification",
-        "save_article_deep_reasoning_analysis",
+        "save_task_output",
+        "get_task_output",
         "get_stock_basic_info",
         "get_stock_note",
         "update_hedgehog_skill_versions"

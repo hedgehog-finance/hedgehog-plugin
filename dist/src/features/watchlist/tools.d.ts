@@ -13,13 +13,13 @@ export declare const watchlistTools: {
         }, "strip", z.ZodTypeAny, {
             stock_code: string;
             stock_name: string;
-            market: "A_SHARE" | "US_SHARE" | "HK_SHARE" | "FUTURES" | "FUND" | "OTHER";
             exchange: "SSE" | "SZSE" | "HKEX" | "NASDAQ" | "NYSE" | "AMEX";
+            market: "A_SHARE" | "US_SHARE" | "HK_SHARE" | "FUTURES" | "FUND" | "OTHER";
         }, {
             stock_code: string;
             stock_name: string;
-            market: "A_SHARE" | "US_SHARE" | "HK_SHARE" | "FUTURES" | "FUND" | "OTHER";
             exchange: "SSE" | "SZSE" | "HKEX" | "NASDAQ" | "NYSE" | "AMEX";
+            market: "A_SHARE" | "US_SHARE" | "HK_SHARE" | "FUTURES" | "FUND" | "OTHER";
         }>;
         registerTool: boolean;
         execute: (args: AddToWatchlistParams, ctx: {
@@ -39,27 +39,27 @@ export declare const watchlistTools: {
             }, "strip", z.ZodTypeAny, {
                 stock_code: string;
                 stock_name: string;
-                market: "A_SHARE" | "US_SHARE" | "HK_SHARE" | "FUTURES" | "FUND" | "OTHER";
                 exchange: "SSE" | "SZSE" | "HKEX" | "NASDAQ" | "NYSE" | "AMEX";
+                market: "A_SHARE" | "US_SHARE" | "HK_SHARE" | "FUTURES" | "FUND" | "OTHER";
             }, {
                 stock_code: string;
                 stock_name: string;
-                market: "A_SHARE" | "US_SHARE" | "HK_SHARE" | "FUTURES" | "FUND" | "OTHER";
                 exchange: "SSE" | "SZSE" | "HKEX" | "NASDAQ" | "NYSE" | "AMEX";
+                market: "A_SHARE" | "US_SHARE" | "HK_SHARE" | "FUTURES" | "FUND" | "OTHER";
             }>, "many">;
         }, "strip", z.ZodTypeAny, {
             stocks: {
                 stock_code: string;
                 stock_name: string;
-                market: "A_SHARE" | "US_SHARE" | "HK_SHARE" | "FUTURES" | "FUND" | "OTHER";
                 exchange: "SSE" | "SZSE" | "HKEX" | "NASDAQ" | "NYSE" | "AMEX";
+                market: "A_SHARE" | "US_SHARE" | "HK_SHARE" | "FUTURES" | "FUND" | "OTHER";
             }[];
         }, {
             stocks: {
                 stock_code: string;
                 stock_name: string;
-                market: "A_SHARE" | "US_SHARE" | "HK_SHARE" | "FUTURES" | "FUND" | "OTHER";
                 exchange: "SSE" | "SZSE" | "HKEX" | "NASDAQ" | "NYSE" | "AMEX";
+                market: "A_SHARE" | "US_SHARE" | "HK_SHARE" | "FUTURES" | "FUND" | "OTHER";
             }[];
         }>;
         registerTool: boolean;

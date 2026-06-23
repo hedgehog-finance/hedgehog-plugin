@@ -248,11 +248,9 @@ function resolveDailyMorningBriefingSession(rt, dailyMorningBriefingId, requeste
     try {
         const db = getDB();
         const row = db.prepare(`
-			SELECT sessionId
-			FROM daily_morning_briefings
-			WHERE id = ?
-			ORDER BY updatedAt DESC
-			LIMIT 1
+			SELECT id AS sessionId
+			FROM agent_sessions
+			WHERE id = ? AND biz_type = 'morning_briefing'
 		`).get(dailyMorningBriefingId);
         if (!row?.sessionId)
             return null;
@@ -357,6 +355,7 @@ export const chatSessionHistoryTools = {
                         agentId: resolved.agentId,
                         sessionKey: resolved.sessionKey,
                         openclawSessionId: null,
+                        sessionStatus: null,
                         matchedBy: resolved.matchedBy,
                         interactionId: args.interactionId || null,
                         turnComplete: false,
@@ -382,6 +381,7 @@ export const chatSessionHistoryTools = {
                     agentId: resolved.agentId,
                     sessionKey: resolved.sessionKey,
                     openclawSessionId: resolved.entry.sessionId,
+                    sessionStatus: resolved.entry.status || null,
                     matchedBy: resolved.matchedBy,
                     interactionId: args.interactionId || null,
                     turnComplete: selectedInteraction.turnComplete,

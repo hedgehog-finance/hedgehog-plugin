@@ -20,8 +20,8 @@ export declare const StockBasicItemSchema: z.ZodObject<{
     name: string;
     stock_code: string;
     industry: string;
-    market: string;
     exchange: string;
+    market: string;
     act_ent_type: string;
     act_name: string;
     area: string;
@@ -71,8 +71,8 @@ export declare const SyncStockBasicParamsSchema: z.ZodObject<{
         name: string;
         stock_code: string;
         industry: string;
-        market: string;
         exchange: string;
+        market: string;
         act_ent_type: string;
         act_name: string;
         area: string;
@@ -105,8 +105,8 @@ export declare const SyncStockBasicParamsSchema: z.ZodObject<{
         name: string;
         stock_code: string;
         industry: string;
-        market: string;
         exchange: string;
+        market: string;
         act_ent_type: string;
         act_name: string;
         area: string;

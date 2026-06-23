@@ -1,5 +1,4 @@
 import { z } from "zod";
-export declare const InformationVerificationStatusSchema: z.ZodEnum<["generating", "completed", "failed"]>;
 export declare const BuildInformationVerificationMessageParamsSchema: z.ZodObject<{
     newsId: z.ZodString;
     sourceTitle: z.ZodString;
@@ -8,14 +7,14 @@ export declare const BuildInformationVerificationMessageParamsSchema: z.ZodObjec
     sessionId: z.ZodDefault<z.ZodOptional<z.ZodString>>;
 }, "strip", z.ZodTypeAny, {
     sessionId: string;
-    sourceTitle: string;
-    sourceContent: string;
     newsId: string;
+    sourceTitle: string;
     publishTime: string;
+    sourceContent: string;
 }, {
+    newsId: string;
     sourceTitle: string;
     sourceContent: string;
-    newsId: string;
     sessionId?: string | undefined;
     publishTime?: string | undefined;
 }>;
@@ -72,17 +71,17 @@ export declare const GetInformationVerificationDetailParamsSchema: z.ZodEffects<
     id: z.ZodOptional<z.ZodString>;
     sourceId: z.ZodOptional<z.ZodString>;
 }, "strip", z.ZodTypeAny, {
-    sourceId?: string | undefined;
     id?: string | undefined;
+    sourceId?: string | undefined;
 }, {
-    sourceId?: string | undefined;
     id?: string | undefined;
+    sourceId?: string | undefined;
 }>, {
-    sourceId?: string | undefined;
     id?: string | undefined;
+    sourceId?: string | undefined;
 }, {
-    sourceId?: string | undefined;
     id?: string | undefined;
+    sourceId?: string | undefined;
 }>;
 export type GetInformationVerificationDetailParams = z.infer<typeof GetInformationVerificationDetailParamsSchema>;
 export declare const GetInformationVerificationDetailBySessionParamsSchema: z.ZodObject<{
@@ -96,75 +95,3 @@ export declare const GetInformationVerificationDetailBySessionParamsSchema: z.Zo
     sourceId: string;
 }>;
 export type GetInformationVerificationDetailBySessionParams = z.infer<typeof GetInformationVerificationDetailBySessionParamsSchema>;
-export declare const SaveInformationVerificationParamsSchema: z.ZodEffects<z.ZodEffects<z.ZodObject<{
-    sourceId: z.ZodString;
-    sourceTitle: z.ZodDefault<z.ZodOptional<z.ZodString>>;
-    sessionId: z.ZodDefault<z.ZodOptional<z.ZodString>>;
-    content: z.ZodDefault<z.ZodString>;
-    status: z.ZodDefault<z.ZodEnum<["generating", "completed", "failed"]>>;
-}, "strict", z.ZodTypeAny, {
-    status: "generating" | "completed" | "failed";
-    sessionId: string;
-    sourceId: string;
-    sourceTitle: string;
-    content: string;
-}, {
-    sourceId: string;
-    status?: "generating" | "completed" | "failed" | undefined;
-    sessionId?: string | undefined;
-    sourceTitle?: string | undefined;
-    content?: string | undefined;
-}>, {
-    status: "generating" | "completed" | "failed";
-    sessionId: string;
-    sourceId: string;
-    sourceTitle: string;
-    content: string;
-}, {
-    sourceId: string;
-    status?: "generating" | "completed" | "failed" | undefined;
-    sessionId?: string | undefined;
-    sourceTitle?: string | undefined;
-    content?: string | undefined;
-}>, {
-    status: "generating" | "completed" | "failed";
-    sessionId: string;
-    sourceId: string;
-    sourceTitle: string;
-    content: string;
-}, {
-    sourceId: string;
-    status?: "generating" | "completed" | "failed" | undefined;
-    sessionId?: string | undefined;
-    sourceTitle?: string | undefined;
-    content?: string | undefined;
-}>;
-export type SaveInformationVerificationParams = z.infer<typeof SaveInformationVerificationParamsSchema>;
-export declare const SaveInformationVerificationAgentToolSchema: {
-    type: string;
-    additionalProperties: boolean;
-    required: string[];
-    properties: {
-        sourceId: {
-            type: string;
-            description: string;
-        };
-        sourceTitle: {
-            type: string;
-            description: string;
-        };
-        sessionId: {
-            type: string;
-            description: string;
-        };
-        content: {
-            type: string;
-            description: string;
-        };
-        status: {
-            type: string;
-            enum: string[];
-            description: string;
-        };
-    };
-};

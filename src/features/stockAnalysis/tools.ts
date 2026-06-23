@@ -14,8 +14,6 @@ import {
 	QueryStockAiAnalysisStocksParamsSchema,
 	QueryStockAiAnalysisHistoryParamsSchema,
 	RuntimeTool,
-	SaveStockAiAnalysisAgentToolSchema,
-	SaveStockAiAnalysisParamsSchema,
 	StockAiAnalysis,
 	StockAiAnalysisStockSummary,
 	StockAiAnalysisWithoutContent
@@ -40,19 +38,11 @@ function buildStockAiAnalysisContent(args: BuildStockAiAnalysisMessageParams): s
 function buildStockAiAnalysisMessage(args: BuildStockAiAnalysisMessageParams): string {
 	const stock_code = normalizeStockCode(args.stock_code);
 	const sessionId = args.sessionId || "";
-	const buildFinalSaveParams = (status: "completed" | "failed") => JSON.stringify({
-		stock_code,
-		stock_name: args.stock_name,
-		market: args.market,
-		sessionId,
-		status,
-		content: "..."
-	});
 	return JSON.stringify({
 		cw_system_prompt: [
 			`第 1 步：必须触发并使用 ${STOCK_AI_ANALYSIS_SKILL} skill 生成个股 AI 分析报告。`,
-			`第 2 步：生成成功后必须调用 save_stock_ai_analysis，参数为 ${buildFinalSaveParams("completed")}，content 必须原样传入 skill 生成的最终完整个股分析报告全文，禁止摘要、改写、删减、重排或重新组织。`,
-			`失败处理：生成失败后必须调用 save_stock_ai_analysis，参数为 ${buildFinalSaveParams("failed")}，content 存放完整错误信息。`,
+			`第 2 步：生成成功后必须调用 save_task_output，参数为 {"sessionId":"${sessionId}","saveStrategy":"overwrite","output":"...","status":"completed"}，output 必须原样传入 skill 生成的最终完整个股分析报告全文，禁止摘要、改写、删减、重排或重新组织。`,
+			`失败处理：生成失败后必须调用 save_task_output，参数为 {"sessionId":"${sessionId}","saveStrategy":"overwrite","output":"...","status":"failed"}，output 存放完整错误信息。`,
 		].join("\n"),
 		cw_market: args.market,
 		cw_content: buildStockAiAnalysisContent({ ...args, stock_code }),
@@ -64,18 +54,36 @@ function buildStockAiAnalysisMessage(args: BuildStockAiAnalysisMessageParams): s
 	});
 }
 
+function mapRowToStockAnalysis(row: any): StockAiAnalysis {
+	const ref = JSON.parse(row.reference || "{}");
+	return {
+		id: row.id,
+		stock_code: ref.stock_code || "",
+		stock_name: ref.stock_name || "",
+		market: ref.market_type || "CN",
+		sessionId: row.id,
+		status: row.status,
+		content: row.content,
+		createdAt: row.created_at,
+		updatedAt: row.updated_at
+	};
+}
+
 function selectLatestStockAnalysis(
 	db: ReturnType<typeof getDB>,
 	stock_code: string,
 	market: string
 ): StockAiAnalysis | undefined {
-	return db.prepare(`
-		SELECT id, stock_code, stock_name, market, sessionId, status, content, createdAt, updatedAt
-		FROM stock_ai_analysis
-		WHERE stock_code = ? AND market = ?
-		ORDER BY updatedAt DESC, createdAt DESC
+	const row = db.prepare(`
+		SELECT id, reference, status, content, created_at, updated_at
+		FROM agent_sessions
+		WHERE biz_type = 'stock_analysis'
+			AND json_extract(reference, '$.stock_code') = ?
+			AND json_extract(reference, '$.market_type') = ?
+		ORDER BY updated_at DESC, created_at DESC
 		LIMIT 1
-	`).get(stock_code, market) as StockAiAnalysis | undefined;
+	`).get(stock_code, market) as any;
+	return row ? mapRowToStockAnalysis(row) : undefined;
 }
 
 function selectLatestGeneratingStockAnalysis(
@@ -87,55 +95,42 @@ function selectLatestGeneratingStockAnalysis(
 	const normalizedSessionId = sessionId?.trim() || "";
 	if (normalizedSessionId) {
 		const bySession = db.prepare(`
-			SELECT id, stock_code, stock_name, market, sessionId, status, content, createdAt, updatedAt
-			FROM stock_ai_analysis
-			WHERE stock_code = ? AND market = ? AND sessionId = ? AND status = 'generating'
-			ORDER BY updatedAt DESC, createdAt DESC
+			SELECT id, reference, status, content, created_at, updated_at
+			FROM agent_sessions
+			WHERE biz_type = 'stock_analysis'
+				AND json_extract(reference, '$.stock_code') = ?
+				AND json_extract(reference, '$.market_type') = ?
+				AND id = ?
+				AND status = 'generating'
+			ORDER BY updated_at DESC, created_at DESC
 			LIMIT 1
-		`).get(stock_code, market, normalizedSessionId) as StockAiAnalysis | undefined;
-		if (bySession) return bySession;
+		`).get(stock_code, market, normalizedSessionId) as any;
+		if (bySession) return mapRowToStockAnalysis(bySession);
 	}
 
-	return db.prepare(`
-		SELECT id, stock_code, stock_name, market, sessionId, status, content, createdAt, updatedAt
-		FROM stock_ai_analysis
-		WHERE stock_code = ? AND market = ? AND status = 'generating'
-		ORDER BY updatedAt DESC, createdAt DESC
+	const row = db.prepare(`
+		SELECT id, reference, status, content, created_at, updated_at
+		FROM agent_sessions
+		WHERE biz_type = 'stock_analysis'
+			AND json_extract(reference, '$.stock_code') = ?
+			AND json_extract(reference, '$.market_type') = ?
+			AND status = 'generating'
+		ORDER BY updated_at DESC, created_at DESC
 		LIMIT 1
-	`).get(stock_code, market) as StockAiAnalysis | undefined;
-}
-
-function selectStockAnalysisForUpdate(
-	db: ReturnType<typeof getDB>,
-	stock_code: string,
-	market: string,
-	sessionId: string
-): StockAiAnalysis | undefined {
-	if (sessionId) {
-		const bySession = db.prepare(`
-			SELECT id, stock_code, stock_name, market, sessionId, status, content, createdAt, updatedAt
-			FROM stock_ai_analysis
-			WHERE stock_code = ? AND market = ? AND sessionId = ?
-			ORDER BY updatedAt DESC, createdAt DESC
-			LIMIT 1
-		`).get(stock_code, market, sessionId) as StockAiAnalysis | undefined;
-		if (bySession) return bySession;
-	}
-
-	return selectLatestGeneratingStockAnalysis(db, stock_code, market);
+	`).get(stock_code, market) as any;
+	return row ? mapRowToStockAnalysis(row) : undefined;
 }
 
 function selectStockAnalysisDetail(
 	db: ReturnType<typeof getDB>,
 	id: string
 ): StockAiAnalysis | undefined {
-	return db.prepare(`
-		SELECT id, stock_code, stock_name, market, sessionId, status, content, createdAt, updatedAt
-		FROM stock_ai_analysis
-		WHERE id = ?
-		ORDER BY updatedAt DESC, createdAt DESC
-		LIMIT 1
-	`).get(id) as StockAiAnalysis | undefined;
+	const row = db.prepare(`
+		SELECT id, reference, status, content, created_at, updated_at
+		FROM agent_sessions
+		WHERE id = ? AND biz_type = 'stock_analysis'
+	`).get(id) as any;
+	return row ? mapRowToStockAnalysis(row) : undefined;
 }
 
 function selectStockAnalysisDetailBySession(
@@ -143,14 +138,16 @@ function selectStockAnalysisDetailBySession(
 	sessionId: string,
 	stock_code: string
 ): StockAiAnalysisWithoutContent | undefined {
-	return db.prepare(`
-		SELECT id, stock_code, stock_name, market, sessionId, status, createdAt, updatedAt
-		FROM stock_ai_analysis
-		WHERE sessionId = ? AND stock_code = ?
-		ORDER BY updatedAt DESC, createdAt DESC
+	const row = db.prepare(`
+		SELECT id, reference, status, created_at, updated_at
+		FROM agent_sessions
+		WHERE id = ? AND biz_type = 'stock_analysis' AND json_extract(reference, '$.stock_code') = ?
+		ORDER BY updated_at DESC, created_at DESC
 		LIMIT 1
-	`).get(sessionId, stock_code) as StockAiAnalysisWithoutContent | undefined;
+	`).get(sessionId, stock_code) as any;
+	return row ? mapRowToStockAnalysis(row) : undefined;
 }
+
 
 function queryStockAnalysisStocks(
 	db: ReturnType<typeof getDB>,
@@ -162,89 +159,93 @@ function queryStockAnalysisStocks(
 	const rows = db.prepare(`
 		WITH grouped AS (
 			SELECT
-				stock_code,
-				market,
+				json_extract(reference, '$.stock_code') AS stock_code,
+				json_extract(reference, '$.market_type') AS market,
 				COUNT(*) AS analysisCount,
-				MAX(updatedAt || '|' || createdAt || '|' || id) AS latestKey
-			FROM stock_ai_analysis
-			WHERE market = ?
+				MAX(updated_at || '|' || created_at || '|' || id) AS latestKey
+			FROM agent_sessions
+			WHERE biz_type = 'stock_analysis' AND json_extract(reference, '$.market_type') = ?
 			GROUP BY stock_code, market
 		)
 		SELECT
-			a.stock_code,
-			a.stock_name,
-			a.market,
+			g.stock_code,
+			json_extract(a.reference, '$.stock_name') AS stock_name,
+			g.market,
 			a.id AS latestAnalysisId,
 			a.status AS latestStatus,
-			a.createdAt AS latestCreatedAt,
-			a.updatedAt AS latestUpdatedAt,
+			a.created_at AS latestCreatedAt,
+			a.updated_at AS latestUpdatedAt,
 			g.analysisCount
 		FROM grouped g
-		JOIN stock_ai_analysis a
-			ON a.stock_code = g.stock_code
-			AND a.market = g.market
-			AND (a.updatedAt || '|' || a.createdAt || '|' || a.id) = g.latestKey
-		ORDER BY a.updatedAt DESC, a.createdAt DESC
+		JOIN agent_sessions a
+			ON json_extract(a.reference, '$.stock_code') = g.stock_code
+			AND json_extract(a.reference, '$.market_type') = g.market
+			AND (a.updated_at || '|' || a.created_at || '|' || a.id) = g.latestKey
+		ORDER BY a.updated_at DESC, a.created_at DESC
 		LIMIT ? OFFSET ?
-	`).all(market, pageSize, offset) as StockAiAnalysisStockSummary[];
+	`).all(market, pageSize, offset) as any[];
+
 	const countRow = db.prepare(`
 		SELECT COUNT(*) AS total
 		FROM (
 			SELECT 1
-			FROM stock_ai_analysis
-			WHERE market = ?
-			GROUP BY stock_code, market
+			FROM agent_sessions
+			WHERE biz_type = 'stock_analysis' AND json_extract(reference, '$.market_type') = ?
+			GROUP BY json_extract(reference, '$.stock_code'), json_extract(reference, '$.market_type')
 		)
 	`).get(market) as { total: number };
-	return { rows, total: countRow.total || 0 };
+
+	const mappedRows = rows.map(r => ({
+		stock_code: r.stock_code || "",
+		stock_name: r.stock_name || "",
+		market: r.market || "CN",
+		latestAnalysisId: r.latestAnalysisId,
+		latestStatus: r.latestStatus,
+		latestCreatedAt: r.latestCreatedAt,
+		latestUpdatedAt: r.latestUpdatedAt,
+		analysisCount: r.analysisCount
+	}));
+
+	return { rows: mappedRows, total: countRow.total || 0 };
 }
 
-export function saveStockAiAnalysisRecord(
+function createGeneratingStockAnalysis(
 	db: ReturnType<typeof getDB>,
 	args: {
 		stock_code: string;
 		stock_name?: string;
 		market: string;
-		sessionId?: string;
-		content: string;
-		status?: string;
+		sessionId: string;
 	}
 ): StockAiAnalysis {
 	const stock_code = normalizeStockCode(args.stock_code);
-	const status = args.status || "completed";
 	const stock_name = args.stock_name?.trim() || stock_code;
-	const sessionId = args.sessionId?.trim() || "";
-	const content = args.content.trim();
-	const id = randomUUID();
+	const sessionId = args.sessionId;
 
-	const existing = status === "generating"
-		? undefined
-		: selectStockAnalysisForUpdate(db, stock_code, args.market, sessionId);
-	if (existing) {
-		db.prepare(`
-			UPDATE stock_ai_analysis
-			SET status = ?,
-				content = ?,
-				updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
-			WHERE id = ?
-		`).run(status, content, existing.id);
-		return selectStockAnalysisDetail(db, existing.id) as StockAiAnalysis;
-	}
+	const workId = `work_${sessionId}`;
+	const taskId = `task_${sessionId}`;
+	const refObj = {
+		stock_code,
+		stock_name,
+		market_type: args.market
+	};
 
 	db.prepare(`
-		INSERT INTO stock_ai_analysis (id, userId, stock_code, stock_name, market, sessionId, status, content)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`).run(id, "default", stock_code, stock_name, args.market, sessionId, status, content);
+		INSERT OR IGNORE INTO works (id, name, description, status, orchestrator_type)
+		VALUES (?, ?, '个股 AI 分析工作流', 'running', 'hard')
+	`).run(workId, `个股 AI 分析工作流 (${stock_name})`);
 
-	return db.prepare(`
-		SELECT id, stock_code, stock_name, market, sessionId, status, content, createdAt, updatedAt
-		FROM stock_ai_analysis
-		WHERE id = ?
-	`).get(id) as StockAiAnalysis;
-}
+	db.prepare(`
+		INSERT OR IGNORE INTO tasks (id, work_id, name, status, agent_session_id, content)
+		VALUES (?, ?, '执行个股 AI 分析', 'running', ?, '')
+	`).run(taskId, workId, sessionId);
 
-function tableForArticleAnalysis(analysisType: ArticleAiAnalysis["analysisType"]): string {
-	return analysisType === "verification" ? "news_fact_check_analysis" : "news_deep_reasoning_analysis";
+	db.prepare(`
+		INSERT OR IGNORE INTO agent_sessions (id, session_name, biz_type, status, reference, content, work_id, task_id)
+		VALUES (?, ?, 'stock_analysis', 'generating', ?, '', ?, ?)
+	`).run(sessionId, `个股分析 (${stock_name})`, JSON.stringify(refObj), workId, taskId);
+
+	return selectStockAnalysisDetail(db, sessionId) as StockAiAnalysis;
 }
 
 function selectLatestArticleAnalysis(
@@ -253,23 +254,32 @@ function selectLatestArticleAnalysis(
 	analysisType: ArticleAiAnalysis["analysisType"],
 	market: string = "CN"
 ): ArticleAiAnalysis | undefined {
-	const table = tableForArticleAnalysis(analysisType);
-	if (analysisType === "deduction") {
-		return db.prepare(`
-			SELECT id, sourceId, ? AS analysisType, sourceTitle, market, sessionId, status, content, createdAt, updatedAt
-			FROM ${table}
-			WHERE sourceId = ? AND market = ?
-			ORDER BY updatedAt DESC, createdAt DESC
-			LIMIT 1
-		`).get(analysisType, sourceId, market) as ArticleAiAnalysis | undefined;
-	}
-	return db.prepare(`
-		SELECT id, sourceId, ? AS analysisType, sourceTitle, sessionId, status, content, createdAt, updatedAt
-		FROM ${table}
-		WHERE sourceId = ?
-		ORDER BY updatedAt DESC, createdAt DESC
+	const biz_type = analysisType === "verification" ? "fact_check" : "deep_reasoning";
+	
+	const row = db.prepare(`
+		SELECT id, reference, status, content, created_at, updated_at
+		FROM agent_sessions
+		WHERE biz_type = ?
+			AND json_extract(reference, '$.sourceId') = ?
+			${analysisType === "deduction" ? "AND json_extract(reference, '$.market_type') = ?" : ""}
+		ORDER BY updated_at DESC, created_at DESC
 		LIMIT 1
-	`).get(analysisType, sourceId) as ArticleAiAnalysis | undefined;
+	`).get(...(analysisType === "deduction" ? [biz_type, sourceId, market] : [biz_type, sourceId])) as any;
+
+	if (!row) return undefined;
+	const ref = JSON.parse(row.reference || "{}");
+	return {
+		id: row.id,
+		sourceId: ref.sourceId || "",
+		analysisType,
+		sourceTitle: ref.sourceTitle || "",
+		market: ref.market_type || undefined,
+		sessionId: row.id,
+		status: row.status,
+		content: row.content,
+		createdAt: row.created_at,
+		updatedAt: row.updated_at
+	};
 }
 
 export const stockAnalysisTools: Record<string, RuntimeTool> = {
@@ -294,29 +304,32 @@ export const stockAnalysisTools: Record<string, RuntimeTool> = {
 			const args = QueryStockAiAnalysisHistoryParamsSchema.parse(params ?? {});
 			const db = getDB();
 			const offset = (args.page - 1) * args.pageSize;
-			const conditions = ["market = ?"];
+			const conditions = ["biz_type = 'stock_analysis'", "json_extract(reference, '$.market_type') = ?"];
 			const queryParams: unknown[] = [args.market];
 			if (args.stock_code) {
-				conditions.push("stock_code = ?");
+				conditions.push("json_extract(reference, '$.stock_code') = ?");
 				queryParams.push(normalizeStockCode(args.stock_code));
 			}
 			const rows = db.prepare(`
-				SELECT id, stock_code, stock_name, market, sessionId, status, createdAt, updatedAt
-				FROM stock_ai_analysis
+				SELECT id, reference, status, created_at, updated_at
+				FROM agent_sessions
 				WHERE ${conditions.join(" AND ")}
-				ORDER BY updatedAt DESC, createdAt DESC
+				ORDER BY updated_at DESC, created_at DESC
 				LIMIT ? OFFSET ?
-			`).all(...queryParams, args.pageSize, offset);
+			`).all(...queryParams, args.pageSize, offset) as any[];
+
 			const countRow = db.prepare(`
 				SELECT COUNT(*) AS total
-				FROM stock_ai_analysis
+				FROM agent_sessions
 				WHERE ${conditions.join(" AND ")}
 			`).get(...queryParams) as { total: number };
 			const total = countRow.total || 0;
 
+			const mappedRows = rows.map(r => mapRowToStockAnalysis(r));
+
 			return JSON.stringify({
 				success: true,
-				data: rows,
+				data: mappedRows,
 				pagination: {
 					page: args.page,
 					pageSize: args.pageSize,
@@ -395,15 +408,14 @@ export const stockAnalysisTools: Record<string, RuntimeTool> = {
 					}
 				});
 			}
-			const preflightSave = saveStockAiAnalysisRecord(db, {
+			const sessionId = args.sessionId || randomUUID();
+			const preflightSave = createGeneratingStockAnalysis(db, {
 				stock_code,
 				stock_name: args.stock_name,
 				market: args.market,
-				sessionId: args.sessionId || "",
-				status: "generating",
-				content: ""
+				sessionId: sessionId
 			});
-			const message = buildStockAiAnalysisMessage({ ...args, stock_code });
+			const message = buildStockAiAnalysisMessage({ ...args, stock_code, sessionId });
 			return JSON.stringify({
 				success: true,
 				data: {
@@ -411,26 +423,6 @@ export const stockAnalysisTools: Record<string, RuntimeTool> = {
 					message
 				}
 			});
-		}
-	},
-	save_stock_ai_analysis: {
-		name: "save_stock_ai_analysis",
-		description:
-			"保存个股 AI 分析结果。任务派发工具通常已预先保存 status=generating；Agent 生成成功后以 status=completed 保存完整正文 content，生成失败后以 status=failed 保存完整错误信息。status=generating 仅用于兼容直接预占位调用。",
-		parameters: SaveStockAiAnalysisAgentToolSchema,
-		registerTool: true,
-		async execute(params) {
-			const args = SaveStockAiAnalysisParamsSchema.parse(params);
-			const db = getDB();
-			if (args.status === "generating") {
-				const stock_code = normalizeStockCode(args.stock_code);
-				const generating = selectLatestGeneratingStockAnalysis(db, stock_code, args.market, args.sessionId);
-				if (generating) {
-					return JSON.stringify({ success: true, skipped: true, reason: "already_generating", data: generating });
-				}
-			}
-			const data = saveStockAiAnalysisRecord(db, args);
-			return JSON.stringify({ success: true, data });
 		}
 	},
 	get_article_ai_analysis: {
@@ -453,30 +445,46 @@ export const stockAnalysisTools: Record<string, RuntimeTool> = {
 		async execute(params, ctx) {
 			const args = QueryArticleAiAnalysisHistoryParamsSchema.parse(params ?? {});
 			const db = getDB();
-			const table = tableForArticleAnalysis(args.analysisType);
+			const biz_type = args.analysisType === "verification" ? "fact_check" : "deep_reasoning";
 			const offset = (args.page - 1) * args.pageSize;
-			const marketCondition = args.analysisType === "deduction" ? " AND market = ?" : "";
+			const marketCondition = args.analysisType === "deduction" ? " AND json_extract(reference, '$.market_type') = ?" : "";
 			const queryParams = args.analysisType === "deduction"
-				? [args.analysisType, args.market, args.pageSize, offset]
-				: [args.analysisType, args.pageSize, offset];
+				? [biz_type, args.market, args.pageSize, offset]
+				: [biz_type, args.pageSize, offset];
 			const rows = db.prepare(`
-					SELECT id, sourceId, ? AS analysisType, sourceTitle, ${args.analysisType === "deduction" ? "market," : ""} sessionId, status, createdAt, updatedAt
-				FROM ${table}
-				WHERE 1 = 1${marketCondition}
-				ORDER BY updatedAt DESC, createdAt DESC
+				SELECT id, reference, status, created_at, updated_at
+				FROM agent_sessions
+				WHERE biz_type = ?${marketCondition}
+				ORDER BY updated_at DESC, created_at DESC
 				LIMIT ? OFFSET ?
-			`).all(...queryParams);
-			const countParams = args.analysisType === "deduction" ? [args.market] : [];
+			`).all(...queryParams) as any[];
+
+			const countParams = args.analysisType === "deduction" ? [biz_type, args.market] : [biz_type];
 			const countRow = db.prepare(`
 				SELECT COUNT(*) AS total
-				FROM ${table}
-				WHERE 1 = 1${marketCondition}
+				FROM agent_sessions
+				WHERE biz_type = ?${marketCondition}
 			`).get(...countParams) as { total: number };
 			const total = countRow.total || 0;
 
+			const data = rows.map(r => {
+				const ref = JSON.parse(r.reference || "{}");
+				return {
+					id: r.id,
+					sourceId: ref.sourceId || "",
+					analysisType: args.analysisType,
+					sourceTitle: ref.sourceTitle || "",
+					market: ref.market_type || undefined,
+					sessionId: r.id,
+					status: r.status,
+					createdAt: r.created_at,
+					updatedAt: r.updated_at
+				};
+			});
+
 			return JSON.stringify({
 				success: true,
-				data: rows,
+				data,
 				pagination: {
 					page: args.page,
 					pageSize: args.pageSize,

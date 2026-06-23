@@ -8,6 +8,7 @@ import { stockBasicTools } from "./stockBasic/tools.js";
 import { informationVerificationTools } from "./informationVerification/tools.js";
 import { deepReasoningTools } from "./deepReasoning/tools.js";
 import { chatSessionHistoryTools } from "./chatSessionHistory/tools.js";
+import { tasksOutputTools } from "./tasksOutput/tools.js";
 export const allFeaturesTools = {
     ...watchlistTools,
     ...profileLibraryTools,
@@ -18,6 +19,7 @@ export const allFeaturesTools = {
     ...stockBasicTools,
     ...informationVerificationTools,
     ...deepReasoningTools,
-    ...chatSessionHistoryTools
+    ...chatSessionHistoryTools,
+    ...tasksOutputTools
 };
 //# sourceMappingURL=index.js.map

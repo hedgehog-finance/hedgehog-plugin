@@ -7,9 +7,7 @@ import {
 	GetInformationVerificationDetailBySessionParamsSchema,
 	GetInformationVerificationDetailParamsSchema,
 	QueryInformationVerificationHistoryParamsSchema,
-	RuntimeTool,
-	SaveInformationVerificationAgentToolSchema,
-	SaveInformationVerificationParamsSchema
+	RuntimeTool
 } from "./schema.js";
 
 const INFORMATION_VERIFICATION_SKILL = "hedgehog-information-verification";
@@ -29,17 +27,11 @@ function buildContent(args: BuildInformationVerificationMessageParams): string {
 
 function buildInformationVerificationMessage(args: BuildInformationVerificationMessageParams): string {
 	const sessionId = args.sessionId || "";
-	const buildFinalSaveParams = (status: "completed" | "failed") => JSON.stringify({
-		sourceId: args.newsId,
-		sessionId,
-		status,
-		content: "..."
-	});
 	return JSON.stringify({
 		cw_system_prompt: [
 			`第 1 步：必须触发并使用 ${INFORMATION_VERIFICATION_SKILL} skill 生成信息求证与置信度审计报告。`,
-			`第 2 步：生成成功后必须调用 save_information_verification，参数为 ${buildFinalSaveParams("completed")}，content 必须原样传入 skill 生成的最终完整求证报告全文，禁止摘要、改写、删减、重排或重新组织。`,
-			`失败处理：生成失败后必须调用 save_information_verification，参数为 ${buildFinalSaveParams("failed")}，content 存放完整错误信息。`
+			`第 2 步：生成成功后必须调用 save_task_output，参数为 {"sessionId":"${sessionId}","saveStrategy":"overwrite","output":"...","status":"completed"}，output 必须原样传入 skill 生成的最终完整求证报告全文，禁止摘要、改写、删减、重排或重新组织。`,
+			`失败处理：生成失败后必须调用 save_task_output，参数为 {"sessionId":"${sessionId}","saveStrategy":"overwrite","output":"...","status":"failed"}，output 存放完整错误信息。`
 		].join("\n"),
 		cw_content: buildContent(args),
 		cw_output: [
@@ -49,99 +41,87 @@ function buildInformationVerificationMessage(args: BuildInformationVerificationM
 	});
 }
 
+function mapRowToFactCheck(row: any) {
+	const ref = JSON.parse(row.reference || "{}");
+	return {
+		id: row.id,
+		sourceId: ref.sourceId || "",
+		sourceTitle: ref.sourceTitle || "",
+		sessionId: row.id,
+		status: row.status,
+		content: row.content,
+		createdAt: row.created_at,
+		updatedAt: row.updated_at
+	};
+}
+
 function selectGeneratingInformationVerification(sourceId: string, sessionId?: string) {
 	const db = getDB();
 	const normalizedSessionId = sessionId?.trim() || "";
 	if (normalizedSessionId) {
 		const bySession = db.prepare(`
-			SELECT id, sourceId, sourceTitle, sessionId, status, content, createdAt, updatedAt
-			FROM news_fact_check_analysis
-			WHERE sourceId = ? AND sessionId = ? AND status = 'generating'
-			ORDER BY updatedAt DESC, createdAt DESC
+			SELECT id, reference, status, content, created_at, updated_at
+			FROM agent_sessions
+			WHERE biz_type = 'fact_check'
+				AND json_extract(reference, '$.sourceId') = ?
+				AND id = ?
+				AND status = 'generating'
+			ORDER BY updated_at DESC, created_at DESC
 			LIMIT 1
-		`).get(sourceId, normalizedSessionId);
-		if (bySession) return bySession;
+		`).get(sourceId, normalizedSessionId) as any;
+		if (bySession) return mapRowToFactCheck(bySession);
 	}
 
-	return db.prepare(`
-		SELECT id, sourceId, sourceTitle, sessionId, status, content, createdAt, updatedAt
-		FROM news_fact_check_analysis
-		WHERE sourceId = ? AND status = 'generating'
-		ORDER BY updatedAt DESC, createdAt DESC
+	const row = db.prepare(`
+		SELECT id, reference, status, content, created_at, updated_at
+		FROM agent_sessions
+		WHERE biz_type = 'fact_check'
+			AND json_extract(reference, '$.sourceId') = ?
+			AND status = 'generating'
+		ORDER BY updated_at DESC, created_at DESC
 		LIMIT 1
-	`).get(sourceId);
+	`).get(sourceId) as any;
+	return row ? mapRowToFactCheck(row) : undefined;
 }
 
-function selectInformationVerificationForUpdate(sourceId: string, sessionId: string) {
-	const db = getDB();
-	if (sessionId) {
-		const bySession = db.prepare(`
-			SELECT id, sourceId, sourceTitle, sessionId, status, content, createdAt, updatedAt
-			FROM news_fact_check_analysis
-			WHERE sourceId = ? AND sessionId = ?
-			ORDER BY updatedAt DESC, createdAt DESC
-			LIMIT 1
-		`).get(sourceId, sessionId);
-		if (bySession) return bySession as { id: string; sourceTitle: string };
-	}
-
-	const generating = selectGeneratingInformationVerification(sourceId) as { id: string; sourceTitle: string } | undefined;
-	if (generating) return generating;
-
-	return db.prepare(`
-		SELECT id, sourceId, sourceTitle, sessionId, status, content, createdAt, updatedAt
-		FROM news_fact_check_analysis
-		WHERE sourceId = ?
-		ORDER BY updatedAt DESC, createdAt DESC
-		LIMIT 1
-	`).get(sourceId) as { id: string; sourceTitle: string } | undefined;
-}
-
-function saveInformationVerificationRecord(
+function createGeneratingInformationVerification(
 	args: {
 		sourceId: string;
 		sourceTitle: string;
-		sessionId?: string;
-		content: string;
-		status: string;
+		sessionId: string;
 	}
 ) {
 	const db = getDB();
-	const id = randomUUID();
-	const sessionId = args.sessionId?.trim() || "";
-	const existing = args.status === "generating"
-		? undefined
-		: selectInformationVerificationForUpdate(args.sourceId, sessionId);
+	const { sourceId, sourceTitle, sessionId } = args;
 
-	if (existing) {
-		const sourceTitle = args.sourceTitle.trim() || existing.sourceTitle || "";
-		db.prepare(`
-			UPDATE news_fact_check_analysis
-			SET sourceTitle = ?,
-				sessionId = CASE WHEN ? != '' THEN ? ELSE sessionId END,
-				status = ?,
-				content = ?,
-				updatedAt = STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')
-			WHERE id = ?
-		`).run(sourceTitle, sessionId, sessionId, args.status, args.content, existing.id);
-
-		return db.prepare(`
-			SELECT id, sourceId, 'verification' AS analysisType, sourceTitle, sessionId, status, content, createdAt, updatedAt
-			FROM news_fact_check_analysis
-			WHERE id = ?
-		`).get(existing.id);
-	}
+	const workId = `work_${sessionId}`;
+	const taskId = `task_${sessionId}`;
+	const refObj = {
+		sourceId: sourceId,
+		sourceTitle: sourceTitle.trim()
+	};
 
 	db.prepare(`
-		INSERT INTO news_fact_check_analysis (id, sourceId, sourceTitle, userId, sessionId, status, content)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-	`).run(id, args.sourceId, args.sourceTitle, "default", sessionId, args.status, args.content);
+		INSERT OR IGNORE INTO works (id, name, description, status, orchestrator_type)
+		VALUES (?, ?, '信息求证工作流', 'running', 'hard')
+	`).run(workId, `信息求证工作流 (${sourceTitle.trim()})`);
 
-	return db.prepare(`
-		SELECT id, sourceId, 'verification' AS analysisType, sourceTitle, sessionId, status, content, createdAt, updatedAt
-		FROM news_fact_check_analysis
+	db.prepare(`
+		INSERT OR IGNORE INTO tasks (id, work_id, name, status, agent_session_id, content)
+		VALUES (?, ?, '执行信息求证', 'running', ?, '')
+	`).run(taskId, workId, sessionId);
+
+	db.prepare(`
+		INSERT OR IGNORE INTO agent_sessions (id, session_name, biz_type, status, reference, content, work_id, task_id)
+		VALUES (?, ?, 'fact_check', 'generating', ?, '', ?, ?)
+	`).run(sessionId, `信息求证 (${sourceTitle.trim()})`, JSON.stringify(refObj), workId, taskId);
+
+	const inserted = db.prepare(`
+		SELECT id, reference, status, content, created_at, updated_at
+		FROM agent_sessions
 		WHERE id = ?
-	`).get(id);
+	`).get(sessionId) as any;
+	return { ...mapRowToFactCheck(inserted), analysisType: "verification" };
 }
 
 export const informationVerificationTools: Record<string, RuntimeTool> = {
@@ -156,18 +136,23 @@ export const informationVerificationTools: Record<string, RuntimeTool> = {
 			const db = getDB();
 			const offset = (args.page - 1) * args.pageSize;
 			const rows = db.prepare(`
-				SELECT id, sourceId, sourceTitle, sessionId, status, createdAt, updatedAt
-				FROM news_fact_check_analysis
-				ORDER BY updatedAt DESC, createdAt DESC
+				SELECT id, reference, status, created_at, updated_at
+				FROM agent_sessions
+				WHERE biz_type = 'fact_check'
+				ORDER BY updated_at DESC, created_at DESC
 				LIMIT ? OFFSET ?
-			`).all(args.pageSize, offset);
+			`).all(args.pageSize, offset) as any[];
+
 			const countRow = db.prepare(`
-				SELECT COUNT(*) AS total FROM news_fact_check_analysis
+				SELECT COUNT(*) AS total FROM agent_sessions WHERE biz_type = 'fact_check'
 			`).get() as { total: number };
 			const total = countRow.total || 0;
+
+			const data = rows.map(r => mapRowToFactCheck(r));
+
 			return JSON.stringify({
 				success: true,
-				data: rows,
+				data,
 				pagination: {
 					page: args.page,
 					pageSize: args.pageSize,
@@ -188,22 +173,20 @@ export const informationVerificationTools: Record<string, RuntimeTool> = {
 			const db = getDB();
 			if (args.sourceId) {
 				const row = db.prepare(`
-					SELECT id, sourceId, sourceTitle, sessionId, status, content, createdAt, updatedAt
-					FROM news_fact_check_analysis
-					WHERE sourceId = ?
-					ORDER BY updatedAt DESC, createdAt DESC
+					SELECT id, reference, status, content, created_at, updated_at
+					FROM agent_sessions
+					WHERE biz_type = 'fact_check' AND json_extract(reference, '$.sourceId') = ?
+					ORDER BY updated_at DESC, created_at DESC
 					LIMIT 1
 				`).get(args.sourceId);
-				return JSON.stringify({ success: true, data: row || null });
+				return JSON.stringify({ success: true, data: row ? mapRowToFactCheck(row) : null });
 			}
 			const row = db.prepare(`
-				SELECT id, sourceId, sourceTitle, sessionId, status, content, createdAt, updatedAt
-				FROM news_fact_check_analysis
-				WHERE id = ?
-				ORDER BY updatedAt DESC, createdAt DESC
-				LIMIT 1
+				SELECT id, reference, status, content, created_at, updated_at
+				FROM agent_sessions
+				WHERE id = ? AND biz_type = 'fact_check'
 			`).get(args.id);
-			return JSON.stringify({ success: true, data: row || null });
+			return JSON.stringify({ success: true, data: row ? mapRowToFactCheck(row) : null });
 		}
 	},
 	get_information_verification_detail_by_session: {
@@ -216,13 +199,13 @@ export const informationVerificationTools: Record<string, RuntimeTool> = {
 			const args = GetInformationVerificationDetailBySessionParamsSchema.parse(params);
 			const db = getDB();
 			const row = db.prepare(`
-				SELECT id, sourceId, sourceTitle, sessionId, status, createdAt, updatedAt
-				FROM news_fact_check_analysis
-				WHERE sessionId = ? AND sourceId = ?
-				ORDER BY updatedAt DESC, createdAt DESC
+				SELECT id, reference, status, created_at, updated_at
+				FROM agent_sessions
+				WHERE id = ? AND biz_type = 'fact_check' AND json_extract(reference, '$.sourceId') = ?
+				ORDER BY updated_at DESC, created_at DESC
 				LIMIT 1
 			`).get(args.sessionId, args.sourceId);
-			return JSON.stringify({ success: true, data: row || null });
+			return JSON.stringify({ success: true, data: row ? mapRowToFactCheck(row) : null });
 		}
 	},
 	build_information_verification_message: {
@@ -233,7 +216,8 @@ export const informationVerificationTools: Record<string, RuntimeTool> = {
 		registerTool: false,
 		async execute(params) {
 			const args = BuildInformationVerificationMessageParamsSchema.parse(params);
-			const generating = selectGeneratingInformationVerification(args.newsId, args.sessionId);
+			const sessionId = args.sessionId?.trim() || randomUUID();
+			const generating = selectGeneratingInformationVerification(args.newsId, sessionId);
 			if (generating) {
 				return JSON.stringify({
 					success: true,
@@ -243,14 +227,12 @@ export const informationVerificationTools: Record<string, RuntimeTool> = {
 					}
 				});
 			}
-			const preflightSave = saveInformationVerificationRecord({
+			const preflightSave = createGeneratingInformationVerification({
 				sourceId: args.newsId,
 				sourceTitle: args.sourceTitle,
-				sessionId: args.sessionId || "",
-				status: "generating",
-				content: ""
+				sessionId: sessionId
 			});
-			const message = buildInformationVerificationMessage(args);
+			const message = buildInformationVerificationMessage({ ...args, sessionId });
 			return JSON.stringify({
 				success: true,
 				data: {
@@ -258,23 +240,6 @@ export const informationVerificationTools: Record<string, RuntimeTool> = {
 					message
 				}
 			});
-		}
-	},
-	save_information_verification: {
-		name: "save_information_verification",
-		description: "保存新闻信息求证结果。任务派发工具通常已预先保存 status=generating；Agent 生成成功后以 status=completed 保存完整正文 content，生成失败后以 status=failed 保存完整错误信息。status=generating 仅用于兼容直接预占位调用。",
-		parameters: SaveInformationVerificationAgentToolSchema,
-		registerTool: true,
-		async execute(params) {
-			const args = SaveInformationVerificationParamsSchema.parse(params);
-			if (args.status === "generating") {
-				const generating = selectGeneratingInformationVerification(args.sourceId, args.sessionId);
-				if (generating) {
-					return JSON.stringify({ success: true, skipped: true, reason: "already_generating", data: generating });
-				}
-			}
-			const data = saveInformationVerificationRecord(args);
-			return JSON.stringify({ success: true, data });
 		}
 	}
 };

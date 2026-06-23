@@ -1,5 +1,4 @@
 import { z } from "zod";
-export declare const AiAnalysisStatusSchema: z.ZodEnum<["generating", "completed", "failed"]>;
 export declare const BuildStockAiAnalysisMessageParamsSchema: z.ZodObject<{
     stock_code: z.ZodString;
     stock_name: z.ZodString;
@@ -8,13 +7,13 @@ export declare const BuildStockAiAnalysisMessageParamsSchema: z.ZodObject<{
 }, "strip", z.ZodTypeAny, {
     stock_code: string;
     stock_name: string;
-    market: string;
     sessionId: string;
+    market: string;
 }, {
     stock_code: string;
     stock_name: string;
-    market?: string | undefined;
     sessionId?: string | undefined;
+    market?: string | undefined;
 }>;
 export type BuildStockAiAnalysisMessageParams = z.infer<typeof BuildStockAiAnalysisMessageParamsSchema>;
 export declare const BuildStockAiAnalysisMessageAgentToolSchema: {
@@ -111,89 +110,6 @@ export declare const QueryStockAiAnalysisStocksParamsSchema: z.ZodObject<{
     pageSize?: number | undefined;
 }>;
 export type QueryStockAiAnalysisStocksParams = z.infer<typeof QueryStockAiAnalysisStocksParamsSchema>;
-export declare const SaveStockAiAnalysisParamsSchema: z.ZodEffects<z.ZodEffects<z.ZodObject<{
-    stock_code: z.ZodString;
-    stock_name: z.ZodDefault<z.ZodOptional<z.ZodString>>;
-    market: z.ZodDefault<z.ZodString>;
-    sessionId: z.ZodDefault<z.ZodOptional<z.ZodString>>;
-    content: z.ZodDefault<z.ZodString>;
-    status: z.ZodDefault<z.ZodEnum<["generating", "completed", "failed"]>>;
-}, "strict", z.ZodTypeAny, {
-    stock_code: string;
-    stock_name: string;
-    market: string;
-    status: "generating" | "completed" | "failed";
-    sessionId: string;
-    content: string;
-}, {
-    stock_code: string;
-    stock_name?: string | undefined;
-    market?: string | undefined;
-    status?: "generating" | "completed" | "failed" | undefined;
-    sessionId?: string | undefined;
-    content?: string | undefined;
-}>, {
-    stock_code: string;
-    stock_name: string;
-    market: string;
-    status: "generating" | "completed" | "failed";
-    sessionId: string;
-    content: string;
-}, {
-    stock_code: string;
-    stock_name?: string | undefined;
-    market?: string | undefined;
-    status?: "generating" | "completed" | "failed" | undefined;
-    sessionId?: string | undefined;
-    content?: string | undefined;
-}>, {
-    stock_code: string;
-    stock_name: string;
-    market: string;
-    status: "generating" | "completed" | "failed";
-    sessionId: string;
-    content: string;
-}, {
-    stock_code: string;
-    stock_name?: string | undefined;
-    market?: string | undefined;
-    status?: "generating" | "completed" | "failed" | undefined;
-    sessionId?: string | undefined;
-    content?: string | undefined;
-}>;
-export type SaveStockAiAnalysisParams = z.infer<typeof SaveStockAiAnalysisParamsSchema>;
-export declare const SaveStockAiAnalysisAgentToolSchema: {
-    type: string;
-    additionalProperties: boolean;
-    required: string[];
-    properties: {
-        stock_code: {
-            type: string;
-            description: string;
-        };
-        stock_name: {
-            type: string;
-            description: string;
-        };
-        market: {
-            type: string;
-            description: string;
-        };
-        sessionId: {
-            type: string;
-            description: string;
-        };
-        content: {
-            type: string;
-            description: string;
-        };
-        status: {
-            type: string;
-            enum: string[];
-            description: string;
-        };
-    };
-};
 export interface StockAiAnalysis {
     id: string;
     stock_code: string;

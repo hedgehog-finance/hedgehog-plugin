@@ -251,336 +251,6 @@ function runStockNotesMigrations(db) {
     }
     db.exec("CREATE INDEX IF NOT EXISTS idx_stock_notes_user_stock ON stock_notes(userId, watchlistId, updatedAt DESC)");
 }
-function runDailyMorningBriefingMigrations(db) {
-    const tableColumns = db.prepare("PRAGMA table_info(daily_morning_briefings)").all();
-    const tableColumnNames = new Set(tableColumns.map(column => column.name));
-    const indexes = db.prepare("PRAGMA index_list(daily_morning_briefings)").all();
-    const hasUniqueDateMarketIndex = indexes.some(index => {
-        if (index.unique !== 1)
-            return false;
-        const columns = db.prepare(`PRAGMA index_info(${index.name})`).all();
-        const columnNames = columns.map(column => column.name);
-        return columnNames.length === 2 && columnNames.includes("briefingDate") && columnNames.includes("market");
-    });
-    if (!hasUniqueDateMarketIndex)
-        return;
-    const snapshotColumn = tableColumnNames.has("watchlistSnapshot") ? "watchlistSnapshot" : "watchlistSnapshotJson";
-    const statusColumn = tableColumnNames.has("status") ? "status" : "'completed'";
-    const sessionIdColumn = tableColumnNames.has("sessionId") ? "sessionId" : "''";
-    const lastNudgeAtColumn = tableColumnNames.has("lastNudgeAt") ? "lastNudgeAt" : "''";
-    const nextRetryAtColumn = tableColumnNames.has("nextRetryAt") ? "nextRetryAt" : "''";
-    const attemptCountColumn = tableColumnNames.has("attemptCount") ? "attemptCount" : "0";
-    db.exec("BEGIN");
-    try {
-        db.exec(`
-			DROP TABLE IF EXISTS daily_morning_briefings_history;
-
-			CREATE TABLE daily_morning_briefings_history (
-				id                     TEXT PRIMARY KEY,
-				market                 TEXT NOT NULL DEFAULT 'CN',
-				briefingDate           TEXT NOT NULL,
-				content                TEXT NOT NULL,
-				status                 TEXT NOT NULL DEFAULT 'completed',
-				sessionId              TEXT NOT NULL DEFAULT '',
-				lastNudgeAt            TEXT NOT NULL DEFAULT '',
-				nextRetryAt            TEXT NOT NULL DEFAULT '',
-				attemptCount           INTEGER NOT NULL DEFAULT 0,
-				watchlistSnapshot      TEXT NOT NULL DEFAULT '[]',
-				createdAt              DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
-				updatedAt              DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW'))
-			);
-
-			INSERT INTO daily_morning_briefings_history (id, market, briefingDate, content, status, sessionId, lastNudgeAt, nextRetryAt, attemptCount, watchlistSnapshot, createdAt, updatedAt)
-			SELECT id, market, briefingDate, content, ${statusColumn}, ${sessionIdColumn}, ${lastNudgeAtColumn}, ${nextRetryAtColumn}, ${attemptCountColumn}, ${snapshotColumn}, createdAt, updatedAt
-			FROM daily_morning_briefings;
-
-			DROP TABLE daily_morning_briefings;
-			ALTER TABLE daily_morning_briefings_history RENAME TO daily_morning_briefings;
-			CREATE INDEX IF NOT EXISTS idx_daily_morning_briefings_date ON daily_morning_briefings(briefingDate DESC);
-		`);
-        db.exec("COMMIT");
-    }
-    catch (e) {
-        if (db.inTransaction)
-            db.exec("ROLLBACK");
-        throw e;
-    }
-}
-function runDailyMorningBriefingSchemaMigrations(db) {
-    const columns = db.prepare("PRAGMA table_info(daily_morning_briefings)").all();
-    if (columns.length === 0)
-        return;
-    const columnNames = new Set(columns.map(column => column.name));
-    if (columnNames.has("watchlistSnapshotJson") && !columnNames.has("watchlistSnapshot")) {
-        db.prepare("ALTER TABLE daily_morning_briefings RENAME COLUMN watchlistSnapshotJson TO watchlistSnapshot").run();
-        columnNames.delete("watchlistSnapshotJson");
-        columnNames.add("watchlistSnapshot");
-    }
-    if (!columnNames.has("status")) {
-        db.prepare("ALTER TABLE daily_morning_briefings ADD COLUMN status TEXT NOT NULL DEFAULT 'completed'").run();
-    }
-    if (!columnNames.has("sessionId")) {
-        db.prepare("ALTER TABLE daily_morning_briefings ADD COLUMN sessionId TEXT NOT NULL DEFAULT ''").run();
-    }
-    if (!columnNames.has("lastNudgeAt")) {
-        db.prepare("ALTER TABLE daily_morning_briefings ADD COLUMN lastNudgeAt TEXT NOT NULL DEFAULT ''").run();
-    }
-    if (!columnNames.has("nextRetryAt")) {
-        db.prepare("ALTER TABLE daily_morning_briefings ADD COLUMN nextRetryAt TEXT NOT NULL DEFAULT ''").run();
-    }
-    if (!columnNames.has("attemptCount")) {
-        db.prepare("ALTER TABLE daily_morning_briefings ADD COLUMN attemptCount INTEGER NOT NULL DEFAULT 0").run();
-    }
-}
-function runStockAiAnalysisMigrations(db) {
-    const tableColumns = db.prepare("PRAGMA table_info(stock_ai_analysis)").all();
-    const tableColumnNames = new Set(tableColumns.map(column => column.name));
-    const indexes = db.prepare("PRAGMA index_list(stock_ai_analysis)").all();
-    const hasUniqueStockIndex = indexes.some(index => {
-        if (index.unique !== 1)
-            return false;
-        const columns = db.prepare(`PRAGMA index_info(${index.name})`).all();
-        const columnNames = columns.map(column => column.name);
-        return columnNames.includes("userId") && columnNames.includes("stock_code");
-    });
-    if (!hasUniqueStockIndex)
-        return;
-    const sessionIdColumn = tableColumnNames.has("sessionId") ? "sessionId" : "''";
-    db.exec("BEGIN");
-    try {
-        db.exec(`
-			DROP TABLE IF EXISTS stock_ai_analysis_history;
-
-			CREATE TABLE stock_ai_analysis_history (
-				id            TEXT NOT NULL,
-				userId        TEXT NOT NULL,
-				stock_code     TEXT NOT NULL,
-				stock_name     TEXT NOT NULL,
-				market        TEXT NOT NULL DEFAULT 'CN',
-				sessionId     TEXT NOT NULL DEFAULT '',
-				content       TEXT NOT NULL,
-				createdAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
-				updatedAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
-				PRIMARY KEY(id, userId)
-			);
-
-			INSERT INTO stock_ai_analysis_history (id, userId, stock_code, stock_name, market, sessionId, content, createdAt, updatedAt)
-			SELECT id, userId, stock_code, stock_name, market, ${sessionIdColumn}, content, createdAt, updatedAt
-			FROM stock_ai_analysis;
-
-			DROP TABLE stock_ai_analysis;
-			ALTER TABLE stock_ai_analysis_history RENAME TO stock_ai_analysis;
-			CREATE INDEX IF NOT EXISTS idx_stock_ai_analysis_user_stock_updated ON stock_ai_analysis(userId, stock_code, updatedAt DESC);
-		`);
-        db.exec("COMMIT");
-    }
-    catch (e) {
-        if (db.inTransaction)
-            db.exec("ROLLBACK");
-        throw e;
-    }
-}
-function runStockAiAnalysisSchemaMigrations(db) {
-    const columns = db.prepare("PRAGMA table_info(stock_ai_analysis)").all();
-    if (columns.length > 0 && !columns.some(column => column.name === "status")) {
-        db.prepare("ALTER TABLE stock_ai_analysis ADD COLUMN status TEXT NOT NULL DEFAULT 'completed'").run();
-    }
-    if (columns.length > 0 && !columns.some(column => column.name === "sessionId")) {
-        db.prepare("ALTER TABLE stock_ai_analysis ADD COLUMN sessionId TEXT NOT NULL DEFAULT ''").run();
-    }
-}
-function runArticleAiAnalysisMigrations(db) {
-    const columns = db.prepare("PRAGMA table_info(article_ai_analysis)").all();
-    if (columns.length === 0 || columns.some(column => column.name === "sourceId")) {
-        return;
-    }
-    const columnNames = new Set(columns.map(column => column.name));
-    const sessionIdExpr = columnNames.has("sessionId") ? "sessionId" : "''";
-    db.exec("BEGIN");
-    try {
-        db.exec(`
-			DROP TABLE IF EXISTS article_ai_analysis_v2;
-
-			CREATE TABLE article_ai_analysis_v2 (
-				id            TEXT NOT NULL,
-				sourceId      TEXT NOT NULL,
-				userId        TEXT NOT NULL,
-				analysisType  TEXT NOT NULL,
-				market        TEXT NOT NULL DEFAULT 'CN',
-				sessionId     TEXT NOT NULL DEFAULT '',
-				content       TEXT NOT NULL,
-				createdAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
-				updatedAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
-				PRIMARY KEY(id, userId),
-				UNIQUE(sourceId, userId, analysisType, market)
-			);
-
-			INSERT INTO article_ai_analysis_v2 (id, sourceId, userId, analysisType, market, sessionId, content, createdAt, updatedAt)
-			SELECT lower(hex(randomblob(16))), id, userId, analysisType, market, ${sessionIdExpr}, content, createdAt, updatedAt
-			FROM article_ai_analysis;
-
-			DROP TABLE article_ai_analysis;
-			ALTER TABLE article_ai_analysis_v2 RENAME TO article_ai_analysis;
-			CREATE INDEX IF NOT EXISTS idx_article_ai_analysis_user_source_type_updated
-				ON article_ai_analysis(userId, sourceId, analysisType, updatedAt DESC);
-		`);
-        db.exec("COMMIT");
-    }
-    catch (e) {
-        if (db.inTransaction)
-            db.exec("ROLLBACK");
-        throw e;
-    }
-}
-function runNewsAnalysisMigrations(db) {
-    const columns = db.prepare("PRAGMA table_info(article_ai_analysis)").all();
-    if (columns.length === 0 || !columns.some(column => column.name === "sourceId")) {
-        return;
-    }
-    const columnNames = new Set(columns.map(column => column.name));
-    const sessionIdExpr = columnNames.has("sessionId") ? "sessionId" : "''";
-    db.exec("BEGIN");
-    try {
-        db.exec(`
-			INSERT OR REPLACE INTO news_fact_check_analysis (id, sourceId, sourceTitle, userId, sessionId, status, content, createdAt, updatedAt)
-			SELECT id, sourceId, '', userId, ${sessionIdExpr}, 'completed', content, createdAt, updatedAt
-			FROM article_ai_analysis
-			WHERE analysisType = 'verification';
-
-			INSERT OR REPLACE INTO news_deep_reasoning_analysis (id, sourceId, sourceTitle, userId, market, sessionId, status, content, createdAt, updatedAt)
-			SELECT id, sourceId, '', userId, market, ${sessionIdExpr}, 'completed', content, createdAt, updatedAt
-			FROM article_ai_analysis
-			WHERE analysisType = 'deduction';
-
-			DROP TABLE article_ai_analysis;
-		`);
-        db.exec("COMMIT");
-    }
-    catch (e) {
-        if (db.inTransaction)
-            db.exec("ROLLBACK");
-        throw e;
-    }
-}
-function runNewsFactCheckAnalysisSchemaMigrations(db) {
-    const columns = db.prepare("PRAGMA table_info(news_fact_check_analysis)").all();
-    if (columns.length === 0)
-        return;
-    const columnNames = new Set(columns.map(column => column.name));
-    if (!columnNames.has("market") &&
-        columnNames.has("sourceTitle"))
-        return;
-    const sourceTitleExpr = columnNames.has("sourceTitle") ? "sourceTitle" : "''";
-    const statusExpr = columnNames.has("status") ? "status" : "'completed'";
-    const sessionIdExpr = columnNames.has("sessionId") ? "sessionId" : "''";
-    db.exec("BEGIN");
-    try {
-        db.exec(`
-			DROP TABLE IF EXISTS news_fact_check_analysis_v2;
-
-			CREATE TABLE news_fact_check_analysis_v2 (
-				id            TEXT NOT NULL,
-				sourceId      TEXT NOT NULL,
-				sourceTitle   TEXT NOT NULL DEFAULT '',
-				userId        TEXT NOT NULL,
-				sessionId     TEXT NOT NULL DEFAULT '',
-				status        TEXT NOT NULL DEFAULT 'completed',
-				content       TEXT NOT NULL,
-				createdAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
-				updatedAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
-				PRIMARY KEY(id, userId),
-				UNIQUE(sourceId, userId)
-			);
-
-			INSERT OR REPLACE INTO news_fact_check_analysis_v2 (id, sourceId, sourceTitle, userId, sessionId, status, content, createdAt, updatedAt)
-			SELECT id, sourceId, ${sourceTitleExpr}, userId, ${sessionIdExpr}, ${statusExpr}, content, createdAt, updatedAt
-			FROM news_fact_check_analysis;
-
-			DROP TABLE news_fact_check_analysis;
-			ALTER TABLE news_fact_check_analysis_v2 RENAME TO news_fact_check_analysis;
-			CREATE INDEX IF NOT EXISTS idx_news_fact_check_analysis_user_source_updated
-				ON news_fact_check_analysis(userId, sourceId, updatedAt DESC);
-		`);
-        db.exec("COMMIT");
-    }
-    catch (e) {
-        if (db.inTransaction)
-            db.exec("ROLLBACK");
-        throw e;
-    }
-}
-function runNewsDeepReasoningAnalysisSchemaMigrations(db) {
-    const columns = db.prepare("PRAGMA table_info(news_deep_reasoning_analysis)").all();
-    if (columns.length === 0)
-        return;
-    const columnNames = new Set(columns.map(column => column.name));
-    if (columnNames.has("market") && columnNames.has("sourceTitle"))
-        return;
-    const sourceTitleExpr = columnNames.has("sourceTitle") ? "sourceTitle" : "''";
-    const marketExpr = columnNames.has("market") ? "market" : "'CN'";
-    const statusExpr = columnNames.has("status") ? "status" : "'completed'";
-    const sessionIdExpr = columnNames.has("sessionId") ? "sessionId" : "''";
-    db.exec("BEGIN");
-    try {
-        db.exec(`
-			DROP TABLE IF EXISTS news_deep_reasoning_analysis_v2;
-
-			CREATE TABLE news_deep_reasoning_analysis_v2 (
-				id            TEXT NOT NULL,
-				sourceId      TEXT NOT NULL,
-				sourceTitle   TEXT NOT NULL DEFAULT '',
-				userId        TEXT NOT NULL,
-				market        TEXT NOT NULL DEFAULT 'CN',
-				sessionId     TEXT NOT NULL DEFAULT '',
-				status        TEXT NOT NULL DEFAULT 'completed',
-				content       TEXT NOT NULL,
-				createdAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
-				updatedAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
-				PRIMARY KEY(id, userId),
-				UNIQUE(sourceId, userId, market)
-			);
-
-			INSERT OR REPLACE INTO news_deep_reasoning_analysis_v2 (id, sourceId, sourceTitle, userId, market, sessionId, status, content, createdAt, updatedAt)
-			SELECT id, sourceId, ${sourceTitleExpr}, userId, ${marketExpr}, ${sessionIdExpr}, ${statusExpr}, content, createdAt, updatedAt
-			FROM news_deep_reasoning_analysis;
-
-			DROP TABLE news_deep_reasoning_analysis;
-			ALTER TABLE news_deep_reasoning_analysis_v2 RENAME TO news_deep_reasoning_analysis;
-			CREATE INDEX IF NOT EXISTS idx_news_deep_reasoning_analysis_user_source_updated
-				ON news_deep_reasoning_analysis(userId, sourceId, updatedAt DESC);
-		`);
-        db.exec("COMMIT");
-    }
-    catch (e) {
-        if (db.inTransaction)
-            db.exec("ROLLBACK");
-        throw e;
-    }
-}
-function runNewsFactCheckDropSourceContentMigration(db) {
-    const columns = db.prepare("PRAGMA table_info(news_fact_check_analysis)").all();
-    if (columns.length === 0)
-        return;
-    if (!columns.some(column => column.name === "sourceContent"))
-        return;
-    db.prepare("ALTER TABLE news_fact_check_analysis DROP COLUMN sourceContent").run();
-}
-function runNewsDeepReasoningDropSourceContentMigration(db) {
-    const columns = db.prepare("PRAGMA table_info(news_deep_reasoning_analysis)").all();
-    if (columns.length === 0)
-        return;
-    if (!columns.some(column => column.name === "sourceContent"))
-        return;
-    db.prepare("ALTER TABLE news_deep_reasoning_analysis DROP COLUMN sourceContent").run();
-}
-function runNewsAnalysisSessionIdMigrations(db) {
-    for (const table of ["news_fact_check_analysis", "news_deep_reasoning_analysis"]) {
-        const columns = db.prepare(`PRAGMA table_info(${table})`).all();
-        if (columns.length > 0 && !columns.some(column => column.name === "sessionId")) {
-            db.prepare(`ALTER TABLE ${table} ADD COLUMN sessionId TEXT NOT NULL DEFAULT ''`).run();
-        }
-    }
-}
 function runProfileLibrariesSchemaMigrations(db) {
     const columns = db.prepare("PRAGMA table_info(profile_libraries)").all();
     if (columns.length === 0)
@@ -738,69 +408,83 @@ export function getDB() {
 		);
 		CREATE INDEX IF NOT EXISTS idx_stock_note_profile_libraries_user_note ON stock_note_profile_libraries(userId, noteId);
 
-		CREATE TABLE IF NOT EXISTS stock_ai_analysis (
-			id            TEXT NOT NULL,
-			userId        TEXT NOT NULL,
-			stock_code     TEXT NOT NULL,
-			stock_name     TEXT NOT NULL,
-			market        TEXT NOT NULL DEFAULT 'CN',
-			sessionId     TEXT NOT NULL DEFAULT '',
-			status        TEXT NOT NULL DEFAULT 'completed',
-			content       TEXT NOT NULL,
-			createdAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
-			updatedAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
-			PRIMARY KEY(id, userId)
+		CREATE TABLE IF NOT EXISTS works (
+			id              TEXT PRIMARY KEY,
+			name            TEXT NOT NULL,
+			description     TEXT,
+			status          TEXT NOT NULL DEFAULT 'pending',
+			priority        INTEGER DEFAULT 0,
+			orchestrator_type TEXT NOT NULL DEFAULT 'hard',
+			workflow_def    TEXT,
+			agent_type      TEXT DEFAULT 'hogagent',
+			result_task_id  TEXT,
+			created_by      TEXT DEFAULT 'user',
+			started_at      DATETIME,
+			completed_at    DATETIME,
+			created_at      DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
+			updated_at      DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW'))
 		);
-		CREATE INDEX IF NOT EXISTS idx_stock_ai_analysis_user_stock_updated ON stock_ai_analysis(userId, stock_code, updatedAt DESC);
 
-		CREATE TABLE IF NOT EXISTS news_fact_check_analysis (
-			id            TEXT NOT NULL,
-			sourceId      TEXT NOT NULL,
-			sourceTitle   TEXT NOT NULL DEFAULT '',
-			userId        TEXT NOT NULL,
-			sessionId     TEXT NOT NULL DEFAULT '',
-			status        TEXT NOT NULL DEFAULT 'completed',
-			content       TEXT NOT NULL,
-			createdAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
-			updatedAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
-			PRIMARY KEY(id, userId),
-			UNIQUE(sourceId, userId)
+		CREATE TABLE IF NOT EXISTS tasks (
+			id              TEXT PRIMARY KEY,
+			work_id         TEXT NOT NULL REFERENCES works(id),
+			name            TEXT NOT NULL,
+			mode            TEXT DEFAULT 'standard',
+			status          TEXT NOT NULL DEFAULT 'pending',
+			depends_on      TEXT DEFAULT '[]',
+			agent_session_id TEXT,
+			prompt          TEXT,
+			required_tools_or_skills TEXT DEFAULT '[]',
+			content         TEXT,
+			summary         TEXT,
+			delivery_files  TEXT DEFAULT '[]',
+			validation      TEXT,
+			validation_result TEXT DEFAULT 'pending',
+			started_at      DATETIME,
+			completed_at    DATETIME,
+			created_at      DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
+			updated_at      DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW'))
 		);
-		CREATE INDEX IF NOT EXISTS idx_news_fact_check_analysis_user_source_updated
-			ON news_fact_check_analysis(userId, sourceId, updatedAt DESC);
 
-		CREATE TABLE IF NOT EXISTS news_deep_reasoning_analysis (
-			id            TEXT NOT NULL,
-			sourceId      TEXT NOT NULL,
-			sourceTitle   TEXT NOT NULL DEFAULT '',
-			userId        TEXT NOT NULL,
-			market        TEXT NOT NULL DEFAULT 'CN',
-			sessionId     TEXT NOT NULL DEFAULT '',
-			status        TEXT NOT NULL DEFAULT 'completed',
-			content       TEXT NOT NULL,
-			createdAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
-			updatedAt     DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
-			PRIMARY KEY(id, userId),
-			UNIQUE(sourceId, userId, market)
+		CREATE TABLE IF NOT EXISTS scheduled_jobs (
+			id              TEXT PRIMARY KEY,
+			name            TEXT NOT NULL,
+			description     TEXT,
+			schedule_type   TEXT NOT NULL,
+			schedule_config TEXT NOT NULL,
+			work_template   TEXT NOT NULL,
+			enabled         INTEGER DEFAULT 1,
+			max_retries     INTEGER DEFAULT 0,
+			retry_count     INTEGER DEFAULT 0,
+			last_run_at     DATETIME,
+			last_run_status TEXT,
+			next_run_at     DATETIME,
+			run_count       INTEGER DEFAULT 0,
+			created_at      DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
+			updated_at      DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW'))
 		);
-		CREATE INDEX IF NOT EXISTS idx_news_deep_reasoning_analysis_user_source_updated
-			ON news_deep_reasoning_analysis(userId, sourceId, updatedAt DESC);
 
-		CREATE TABLE IF NOT EXISTS daily_morning_briefings (
-			id                     TEXT PRIMARY KEY,
-			market                 TEXT NOT NULL DEFAULT 'CN',
-			briefingDate           TEXT NOT NULL,
-			content                TEXT NOT NULL,
-			status                 TEXT NOT NULL DEFAULT 'completed',
-			sessionId              TEXT NOT NULL DEFAULT '',
-			lastNudgeAt            TEXT NOT NULL DEFAULT '',
-			nextRetryAt            TEXT NOT NULL DEFAULT '',
-			attemptCount           INTEGER NOT NULL DEFAULT 0,
-			watchlistSnapshot      TEXT NOT NULL DEFAULT '[]',
-			createdAt              DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
-			updatedAt              DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW'))
+		CREATE TABLE IF NOT EXISTS agent_sessions (
+			id              TEXT NOT NULL,
+			session_name    TEXT,
+			biz_type        TEXT NOT NULL DEFAULT 'session',
+			agent_type      TEXT DEFAULT 'hogagent',
+			mode            TEXT DEFAULT 'quick',
+			status          TEXT DEFAULT 'active',
+			reference       TEXT,
+			work_id         TEXT,
+			task_id         TEXT,
+			content         TEXT,
+			summary         TEXT,
+			delivery_files  TEXT DEFAULT '[]',
+			token_usage     TEXT DEFAULT '{}',
+			created_at      DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
+			updated_at      DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
+			PRIMARY KEY(id)
 		);
-		CREATE INDEX IF NOT EXISTS idx_daily_morning_briefings_date ON daily_morning_briefings(briefingDate DESC);
+		CREATE INDEX IF NOT EXISTS idx_agent_sessions_biz ON agent_sessions(biz_type, created_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_agent_sessions_work ON agent_sessions(work_id);
+		CREATE INDEX IF NOT EXISTS idx_agent_sessions_task ON agent_sessions(task_id);
 
 		CREATE TABLE IF NOT EXISTS skill_versions (
 			skillName  TEXT PRIMARY KEY,
@@ -808,6 +492,8 @@ export function getDB() {
 			createdAt  DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW')),
 			updatedAt  DATETIME DEFAULT (STRFTIME('%Y-%m-%dT%H:%M:%fZ', 'NOW'))
 		);
+
+
 		`);
         runClassificationCacheSchemaMigrations(_db);
         runClassificationCacheMigrations(_db);
@@ -815,17 +501,6 @@ export function getDB() {
         runIndustryThemeCategoryMigrations(_db);
         runWatchlistDedupMigrations(_db);
         runStockNotesMigrations(_db);
-        runStockAiAnalysisMigrations(_db);
-        runStockAiAnalysisSchemaMigrations(_db);
-        runArticleAiAnalysisMigrations(_db);
-        runNewsFactCheckAnalysisSchemaMigrations(_db);
-        runNewsDeepReasoningAnalysisSchemaMigrations(_db);
-        runNewsAnalysisMigrations(_db);
-        runNewsAnalysisSessionIdMigrations(_db);
-        runDailyMorningBriefingMigrations(_db);
-        runDailyMorningBriefingSchemaMigrations(_db);
-        runNewsFactCheckDropSourceContentMigration(_db);
-        runNewsDeepReasoningDropSourceContentMigration(_db);
         runProfileLibrariesSchemaMigrations(_db);
     }
     return _db;
